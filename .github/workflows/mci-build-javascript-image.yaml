@@ -1,0 +1,174 @@
+name: Managed CI Build
+
+on:
+  workflow_call:
+
+jobs:
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ env.APP_ID }}
+      app-name: ${{ env.APP_NAME }}
+      target: ${{ env.TARGET }}
+      build-image: ${{ env.BUILD_CONTAINER_IMAGE }}
+      products: ${{ steps.mci-restore.outputs.products }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+
+  create-tag:
+    name: javascript-image/create-tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+          if test -f ./install-dependencies.sh; then
+              chmod +x ./install-dependencies.sh
+              ./install-dependencies.sh
+          fi
+
+    - name: Set env var VERSION_NUMBER
+      uses: glcp/mci-actions-version-number@v1
+
+    - name: Assemble Git Tag
+      id: tag_version
+      shell: bash
+      run: |
+        MAJOR="2"
+        MINOR="0"
+        if [[ "${{ env.VERSION_MAJOR }}" != "" ]]; then MAJOR=${{ env.VERSION_MAJOR }}; fi
+        if [[ "${{ env.VERSION_MINOR }}" != "" ]]; then MINOR=${{ env.VERSION_MINOR }}; fi
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          export tag="${MAJOR}.${VERSION_NUMBER}.${MINOR}"
+          git tag $tag
+          git push --tags
+        elif [[ "${{ github.event.action }}" == "released" ]]; then
+          export tag="${MAJOR}.${{ github.run_number }}.${MINOR}"
+        elif [ "${{ startsWith(github.ref, 'refs/heads/hotfix') }}" == "true" ]; then
+          VERSION=$(echo ${{ github.ref_name }} | awk -F- '{print $2}')
+          echo $VERSION
+          HOTFIX_MAJOR=$(echo $VERSION | awk -F. '{print $1}')
+          HOTFIX_MINOR=$(echo $VERSION | awk -F. '{print $2}')
+          export tag="${HOTFIX_MAJOR}.${HOTFIX_MINOR}.${{ github.run_number }}"
+          git tag $tag
+          git push --tags
+        else
+          export tag="${MAJOR}.${VERSION_NUMBER}.${MINOR}-dev"
+        fi
+        echo "Git Tag version: $tag"
+        echo "tag=$tag" >> $GITHUB_OUTPUT
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
+
+
+
+  docker-build:
+    name: javascript-image/docker-build
+    runs-on: ubuntu-latest
+    needs: [create-tag, get-mci-variables]
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.action == 'released') &&
+        (needs.get-mci-variables.outputs.products != '')
+    strategy:
+      matrix: ${{ fromJson(needs.get-mci-variables.outputs.products) }}
+    steps:
+      - name: Checkout Code for App Build
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Docker Build and Push
+        uses: glcp/mci-actions-docker-build-push@v1
+        with:
+          dockerfile_path: ${{ matrix.DOCKERFILE_PATH }}
+          image_registry: ${{ matrix.IMAGE_REGISTRY }}
+          tag: ${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+          target: ${{ matrix.TARGET }}
+          appname: ${{ env.APP_NAME }}
+          appid: ${{ env.APP_ID }}
+          registry: quay.io
+          build_type: ${{ matrix.BUILD_TYPE }}
+          # gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+          base_image: ${{ matrix.base_image }}
+          docker_push: ${{ matrix.DOCKER_PUSH }}
+          secrets: ${{ toJSON(secrets) }}
+
+  set-artifact-urls:
+    name: javascript-image/set-artifact-urls
+    runs-on: ubuntu-latest
+    needs: [create-tag, get-mci-variables, docker-build]
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.action == 'released'
+    strategy:
+      max-parallel: 1
+      matrix: ${{fromJson(needs.get-mci-variables.outputs.products)}}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set ARTIFACT_URLS with sha1s
+        run: |
+          docker pull quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+          export product_name=${{ matrix.APP_NAME }}${{ matrix.TAG_EXTENSION }}
+          export artifact_url="$(docker inspect --format='{{index .RepoDigests 0}}' quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }})"
+          yq -i '.SBOM += [{"PRODUCT_NAME": strenv(product_name), "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+        shell: bash
+
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+
+
+  jira_update:
+    name:  javascript-image/jira-update
+    needs: [create-tag]
+    runs-on: ubuntu-latest
+    if: always() && ((github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) || github.event.action == 'released')
+    steps:
+    - name: Checkout Code for Coreupdate Push
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        artifact-name: variables-build
+
+    - name: Update Jira
+      uses: glcp/mci-actions-jira-update@v1.0
+      with:
+        pull_request_title: ${{ join(github.event.commits.*.message, ', ') }}
+        build_tag: ${{ needs.create-tag.outputs.tag }}
+        jira_user: ${{ secrets.CCS_JIRA_USER }}
+        jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+        gh_token: ${{ secrets.GLCP_GH_TOKEN }}

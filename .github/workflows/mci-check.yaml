@@ -1,0 +1,120 @@
+name: MCI CHECK
+
+on:
+  workflow_call:
+    outputs:
+      copyright-check:
+        description: "Status of the Copyright check job"
+        value: ${{ jobs.status-output.outputs.copyright-check }}        
+      secret-scanner:
+        description: "Status of the secret scanner job"
+        value: ${{ jobs.status-output.outputs.secret-scanner }}
+      malware-scanner:
+        description: "Status of the malware-scanner job"
+        value: ${{ jobs.status-output.outputs.malware-scanner }}
+      pr-validation:
+        description: "Status of the pr-validation job"
+        value: ${{ jobs.status-output.outputs.pr-validation }}
+
+jobs:
+  mci-check-var:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      copyright_fix: ${{ env.COPYRIGHT_FIX }}
+      skip_checks: ${{ env.SKIP_CHECKS }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+
+  copyright-check:
+    needs: mci-check-var
+    if: |
+      !cancelled() &&
+      (needs.mci-check-var.result == 'skipped' || needs.mci-check-var.result == 'success') && 
+      github.event_name == 'pull_request' &&
+      needs.mci-check-var.outputs.skip_checks != 'true' &&
+      (needs.mci-check-var.outputs.copyright_fix == '' || needs.mci-check-var.outputs.copyright_fix == 'false')
+    uses: hpe-actions/copyright/.github/workflows/copyright.yml@v2
+    with:
+      fix: false
+
+  secret-scanner:
+    if: |
+      !cancelled() &&
+      (needs.mci-check-var.result == 'skipped' || needs.mci-check-var.result == 'success') &&
+      (github.event_name == 'pull_request' || vars.END_TO_END_WF == 'true' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+      ) &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      needs.mci-check-var.outputs.skip_checks != 'true'
+    needs: mci-check-var
+    uses: glcp/Secret-Scan-Tool/.github/workflows/scanning-workflow.yml@main
+    with:
+      repo: ${{ github.event.repository.name }}
+      branch: ${{ github.ref_name }}
+    secrets: inherit
+
+  malware-scanner:
+    needs: mci-check-var
+    if: |
+      !cancelled() && ( needs.mci-check-var.result == 'skipped' || needs.mci-check-var.result == 'success' ) &&
+      (github.event_name == 'pull_request' || vars.END_TO_END_WF == 'true') && 
+       github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-clamav.yml
+    secrets: inherit
+
+  pr-validation-check:
+    needs: mci-check-var
+    if: |
+      !cancelled() && ( needs.mci-check-var.result == 'skipped' || needs.mci-check-var.result == 'success' ) && github.event_name == 'pull_request' 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      # first restore, the variables artifact does not exist, so we load from the checked out repo
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: set output for PR Validation
+        id: validation_check
+        run: |
+          echo "pr_validation=${{ env.PR_VALIDATION }}" >> $GITHUB_OUTPUT
+    outputs:
+      pr_validation: ${{ steps.validation_check.outputs.pr_validation }}
+
+  pr-validation:
+    if:  |
+     !cancelled() && github.event_name == 'pull_request' && needs.pr-validation-check.outputs.pr_validation != 'false' &&  github.event.pull_request.user.login != 'dependabot[bot]'
+    needs: [copyright-check, secret-scanner, malware-scanner, pr-validation-check]
+
+    name: Validating Jira for PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-pr-title-validation@v1.0
+        id: pr-validation
+        with:
+          pull_request_title: ${{ github.event.pull_request.title }}
+          jira_user: ${{ secrets.CCS_JIRA_USER }}
+          jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+          gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+
+  status-output:
+    needs: [copyright-check , secret-scanner, malware-scanner, pr-validation]
+    runs-on: ubuntu-latest
+    if: always()
+    outputs:
+      copyright-check: ${{ steps.setoutput.outputs.copyright-check }}
+      secret-scanner: ${{ steps.setoutput.outputs.secret-scanner }}
+      malware-scanner: ${{ steps.setoutput.outputs.malware-scanner }}
+      pr-validation: ${{ steps.setoutput.outputs.pr-validation }}
+    steps:
+      - id: setoutput
+        run: |
+          echo "copyright-check=${{ needs.copyright-check.result }}" >> $GITHUB_OUTPUT
+          echo "secret-scanner=${{ needs.secret-scanner.result }}" >> $GITHUB_OUTPUT
+          echo "malware-scanner=${{ needs.malware-scanner.result }}" >> $GITHUB_OUTPUT
+          echo "pr-validation=${{ needs.pr-validation.result }}" >> $GITHUB_OUTPUT

@@ -1,0 +1,418 @@
+name: MCI Call - Run FT for PR
+
+on:
+  workflow_call:
+    outputs:
+      ft-pr-status:
+        description: "Status of the FT on PR job"
+        value: ${{ jobs.status-check.outputs.status }}
+      ft-pr-emoji:
+        description: "EMOJI for the FT on PR job status"
+        value: ${{ jobs.status-check.outputs.emoji }}
+
+jobs:
+  show-event-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show event name and event type
+        run: |
+          echo "github.event_name=${{ github.event_name }}"
+          echo "github.event.action=${{ github.event.action }}"
+
+  consecutive-run:
+    if: (needs.get-mci-variables.outputs.ft_disable_dependabot != 'true')
+    needs: get-mci-variables
+    name: Run FTs for PRs Consecutively
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/consecutive-workflow-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  getbuildsystem:
+    name: Get build system from repo variable or mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+    steps:
+      - uses: glcp/mci-actions-get-build-system@v1
+        id: get_build_system
+        with:
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }}
+          git_ref: ${{ github.ref }}
+
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ env.APP_ID }}
+      app-name: ${{ env.APP_NAME }}
+      target: ${{ env.TARGET }}
+      build-image: ${{ env.BUILD_CONTAINER_IMAGE }}
+      ft-test-repo: ${{ env.FT_REPOSITORY }}
+      ft-test-repo-dockerfile: ${{ env.FT_DOCKERFILE_PATH }}
+      products: ${{ steps.mci-restore.outputs.products }}
+      ft_disable_dependabot: ${{ env.FT_DISABLE_DEPENDABOT }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+      - name: dependabot check
+        id: overwrite-var
+        shell: bash
+        run: | 
+           if [[ "${{ github.event.pull_request.user.login }}" != 'dependabot[bot]' ]]; then
+             echo "FT_DISABLE_DEPENDABOT=false" >> $GITHUB_ENV
+           fi
+
+  generate-ft-passed-label:
+    name: Generate ft_passed_SHORTSHA label for the current commit
+    runs-on: ubuntu-latest
+    needs: [consecutive-run]
+    steps:
+      - id: calc_ft_passed_label
+        shell: bash
+        run: echo "label=ft_passed_$(echo $GITHUB_SHA | cut -c 1-8)" >> $GITHUB_OUTPUT
+    outputs:
+      label: ${{ steps.calc_ft_passed_label.outputs.label }}
+
+  check-for-prior-ft:
+    name: Check PR labels for indication of prior FT pass
+    if: (needs.get-mci-variables.outputs.ft_disable_dependabot != 'true')
+    runs-on: ubuntu-latest
+    needs: [generate-ft-passed-label, get-mci-variables]
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - id: find_ft_passed_label
+        shell: bash
+        run: |
+          echo "Check for label ${{ needs.generate-ft-passed-label.outputs.label }} indicating a prior FT pass for this commit"
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, needs.generate-ft-passed-label.outputs.label) }}" == "true" ]]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+    outputs:
+      found: ${{ steps.find_ft_passed_label.outputs.found }}
+
+  products-dockerfile:
+    name: Find automation product within PRODUCTS (if any)
+    needs: get-mci-variables
+    runs-on: ubuntu-latest
+    if: (needs.get-mci-variables.outputs.ft_disable_dependabot != 'true') &&
+        (needs.get-mci-variables.outputs.products != '')
+    strategy:
+      matrix: ${{ fromJson(needs.get-mci-variables.outputs.products) }}
+    steps:
+      - id: get-automation-product
+        if: matrix.BUILD_TYPE == 'automation'
+        shell: bash
+        run: |
+          # product-specific test repo values with fallback to global values
+          ft_test_repo_and_ref=${{ matrix.FT_REPOSITORY }}
+          ft_test_repo_and_ref=${ft_test_repo_and_ref:-${{ needs.get-mci-variables.outputs.ft-test-repo }}}
+          ft_test_repo=$(echo $ft_test_repo_and_ref | awk -F@ '{print $1}')
+          echo "ft_test_repo=$ft_test_repo" >> $GITHUB_OUTPUT
+
+          ft_test_repo_ref=$(echo $ft_test_repo_and_ref | awk -F@ '{print $2}')
+          echo "ft_test_repo_ref=$ft_test_repo_ref" >> $GITHUB_OUTPUT
+
+          if [[ -n "$ft_test_repo" && -n "$ft_test_repo_ref" ]]; then
+            test_dir="tests/"
+          fi
+          dockerfile_path=${{ matrix.DOCKERFILE_PATH }}
+          dockerfile_path=${dockerfile_path:-${{ needs.get-mci-variables.outputs.ft-test-repo-dockerfile }}}
+          dockerfile_path=$(echo ${dockerfile_path:-"tests/feature_test/docker/Dockerfile_FT"} | sed 's,^./,,')
+          echo "dockerfile_path=${dockerfile_path}" >> $GITHUB_OUTPUT
+          echo "local_dockerfile_path=${test_dir}${dockerfile_path}" >> $GITHUB_OUTPUT
+    outputs:
+      ft-test-repo: ${{ steps.get-automation-product.outputs.ft_test_repo }}
+      ft-test-repo-ref: ${{ steps.get-automation-product.outputs.ft_test_repo_ref }}
+      ft-dockerfile: ${{ steps.get-automation-product.outputs.dockerfile_path }}
+      ft-local-dockerfile: ${{ steps.get-automation-product.outputs.local_dockerfile_path }}
+
+  check-dockerfile-ft:
+    name: Select between automation dockerfile possibilities
+    needs: [get-mci-variables, products-dockerfile, consecutive-run]
+    if: always() && !cancelled() &&
+        (needs.get-mci-variables.outputs.ft_disable_dependabot != 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - id: get-products-dockerfile
+        if: needs.products-dockerfile.outputs.ft-dockerfile != ''
+        shell: bash
+        run: |
+          echo "ft_test_repo=${{ needs.products-dockerfile.outputs.ft-test-repo }}" >> $GITHUB_ENV
+          echo "ft_test_repo_ref=${{ needs.products-dockerfile.outputs.ft-test-repo-ref }}" >> $GITHUB_ENV
+          echo "ft_dockerfile=${{ needs.products-dockerfile.outputs.ft-dockerfile }}" >> $GITHUB_ENV
+          echo "ft_local_dockerfile=${{ needs.products-dockerfile.outputs.ft-local-dockerfile }}" >> $GITHUB_ENV
+      - id: get-singular-dockerfile
+        if: needs.products-dockerfile.outputs.ft-dockerfile == ''
+        shell: bash
+        run: |
+          ft_test_repo_and_ref=${{ needs.get-mci-variables.outputs.ft-test-repo }}
+          ft_test_repo=$(echo $ft_test_repo_and_ref | awk -F@ '{print $1}')
+          echo "ft_test_repo=$ft_test_repo" >> $GITHUB_ENV
+
+          ft_test_repo_ref=$(echo $ft_test_repo_and_ref | awk -F@ '{print $2}')
+          echo "ft_test_repo_ref=$ft_test_repo_ref" >> $GITHUB_ENV
+
+          if [[ -n "$ft_test_repo" && -n "$ft_test_repo_ref" ]]; then
+            test_dir="tests/"
+          fi
+          dockerfile_path=$(echo ${{ needs.get-mci-variables.outputs.ft-test-repo-dockerfile }} | sed 's,^./,,')
+          dockerfile_path=${dockerfile_path:-"tests/feature_test/docker/Dockerfile_FT"}
+          echo "ft_dockerfile=${dockerfile_path}" >> $GITHUB_ENV
+          echo "ft_local_dockerfile=${test_dir}${dockerfile_path}" >> $GITHUB_ENV
+      - name: Attempt checkout of test repo dockerfile
+        if: |
+          env.ft_test_repo != '' &&
+          env.ft_test_repo_ref != ''
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+          repository: ${{ env.ft_test_repo }}
+          ref: ${{ env.ft_test_repo_ref }}
+          path: tests
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            ${{ env.ft_dockerfile }}
+      - name: attempt checkout of local Dockerfile
+        if: |
+          env.ft_test_repo == '' ||
+          env.ft_test_repo_ref == ''
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            ${{ env.ft_dockerfile }}
+      - shell: bash
+        run: |
+          echo "ft_dockerfile: ${{ env.ft_dockerfile }}"
+          echo "ft_local_dockerfile: ${{ env.ft_local_dockerfile }}"
+      - name: Check for FT Dockerfile existence
+        id: check_dockerfile_ft
+        uses: glcp/file-existence-action@v2
+        with:
+          files: ${{ env.ft_local_dockerfile }}
+      - shell: bash
+        run: |
+          echo "FT dockerfile: ${{ env.ft_local_dockerfile }}"
+    outputs:
+      found: ${{ steps.check_dockerfile_ft.outputs.files_exists }}
+
+  check-ft-on-pr-label:
+    name: Check and remove FT on PR Label
+    needs: [consecutive-run, get-mci-variables]
+    if: always() && !cancelled() && !failure() && needs.get-mci-variables.outputs.ft_disable_dependabot != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Delete trigger_ft_on_pr_workflow label if found
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'trigger_ft_on_pr_workflow'
+        continue-on-error: true
+        id: delete_ft_on_pr_label
+        with:
+          script: |
+            await github.rest.issues.removeLabel({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: "trigger_ft_on_pr_workflow"
+            })
+      - shell: bash
+        id: ft_on_pr_label_check
+        run: |
+          if [[ "${{ steps.delete_ft_on_pr_label.outcome }}" == "success" ]]; then
+            echo "exists=true"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+          exit 0
+    outputs:
+      found: ${{ steps.ft_on_pr_label_check.outputs.exists }}
+
+  check-supported-build-system:
+    name: Check for supported GLCP_BUILD_SYSTEM
+    if: always() && !cancelled() && !failure() && needs.get-mci-variables.outputs.ft_disable_dependabot != 'true'
+    needs: [getbuildsystem, consecutive-run, get-mci-variables]
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        id: should_run_ft
+        run: |
+          if [[ "${{ needs.getbuildsystem.outputs.output }}" =~ ^(python|golang|maven)$ ]]; then
+            echo "run_ft=true"
+            echo "run_ft=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_ft=false"
+            echo "run_ft=false" >> $GITHUB_OUTPUT
+          fi
+    outputs:
+      supported: ${{ steps.should_run_ft.outputs.run_ft }}
+
+  run-ft:
+    name: Run Functional Tests?
+    runs-on: ubuntu-latest
+    needs: [check-supported-build-system, check-dockerfile-ft, check-ft-on-pr-label]
+    if: always() && !cancelled() && !failure()
+    outputs:
+      run: ${{ steps.evaluate.outputs.run }}
+    steps:
+      - id: evaluate
+        run: |
+          echo "Functional Test conditions met:"
+          echo "1: Supported build system? : ${{ needs.check-supported-build-system.outputs.supported }}"
+          echo "2: Dockerfile_FT exists? : ${{ needs.check-dockerfile-ft.outputs.found }}"
+          echo "3: Triggered by PR label 'trigger_ft_on_pr_workflow'? : ${{ needs.check-ft-on-pr-label.outputs.found }}"
+          if [[ "${{ needs.check-supported-build-system.outputs.supported }}" == "true" &&
+                "${{ needs.check-dockerfile-ft.outputs.found }}" == "true" &&
+                "${{ needs.check-ft-on-pr-label.outputs.found }}" == "true" ]]; then
+              echo "run=true" >> $GITHUB_OUTPUT
+          else
+              echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+#  create-deploy-test:
+#    name: Create, Deploy and Test Mock
+#    runs-on: ubuntu-latest
+#    needs: [run-ft, get-mci-variables, check-dockerfile-ft, check-ft-on-pr-label]
+#    if: needs.run-ft.outputs.run == 'true' && always() && !cancelled() && !failure()
+#    steps:
+#      - id: evaluate
+#        run: |
+#          echo "Mock"
+  
+  create-deploy-test:
+    name: Create, Deploy and Test
+    needs: [run-ft, get-mci-variables, check-dockerfile-ft, check-ft-on-pr-label]
+    if: needs.run-ft.outputs.run == 'true' && always() && !cancelled() && !failure()
+    uses: ./.github/workflows/mci-deploy-and-test.yaml
+    concurrency:
+      group: deploy-and-test
+    with:
+      appname: ${{ needs.get-mci-variables.outputs.app-name }}
+      appid: ${{ needs.get-mci-variables.outputs.app-id }}
+      build_image: ${{ needs.get-mci-variables.outputs.build-image }}
+      target: ${{ needs.get-mci-variables.outputs.target }}
+      image_registry: quay.io/ccsportal/${{ needs.get-mci-variables.outputs.app-name }}
+      channel: CD
+      registry: quay.io
+    secrets:
+      MCI_QUAY_USER: ${{ secrets.MCI_QUAY_USER }}
+      MCI_QUAY_PASSWORD: ${{ secrets.MCI_QUAY_PASSWORD }}
+      CCS_QUAY_CCSPORTAL_BUILDER: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+      CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+      CCS_JFROG_USERNAME: ${{ secrets.CCS_JFROG_USERNAME }}
+      CCS_JFROG_PASSWORD: ${{ secrets.CCS_JFROG_PASSWORD }}
+      TESTRAIL_USERNAME: ${{ secrets.TESTRAIL_USERNAME }}
+      TESTRAIL_PASSWORD: ${{ secrets.TESTRAIL_PASSWORD }}
+      GLCP_GH_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+      aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      qa_pem: ${{secrets.QA_PEM}}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+      coreroller_user: ${{ secrets.CCS_COREROLLER_USER }}
+      coreroller_server: ${{ secrets.CCS_COREROLLER_SERVER }}
+      coreroller_key: ${{ secrets.CCS_COREROLLER_KEY }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      MCI_READ_ONLY_PRIVATE_KEY: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+  cancel-check:
+    runs-on: ubuntu-latest
+    if: cancelled()
+    needs: [create-deploy-test, check-for-prior-ft, check-dockerfile-ft, check-supported-build-system, generate-ft-passed-label]
+    outputs:
+      cancelled: ${{ steps.setoutput.outputs.cancelled }}
+    steps:
+      - name: Check for cancelled jobs
+        id: setoutput
+        run: |
+          echo "cancelled=true" >> $GITHUB_OUTPUT
+
+  status-check:
+    runs-on: ubuntu-latest
+    needs: [create-deploy-test, check-for-prior-ft, check-dockerfile-ft, check-supported-build-system, generate-ft-passed-label, cancel-check]
+    if: always()
+    outputs:
+      status: ${{ steps.setoutput.outputs.status }}
+      emoji: ${{ steps.setoutput.outputs.emoji }}
+    steps:
+      - name: Create status check table for PR and determine final FT pass/fail status
+        id: setoutput
+        run: |
+          if [[ "${{ needs.cancel-check.outputs.cancelled }}" == "true" ]]; then
+            echo "status=cancelled" >> $GITHUB_OUTPUT
+            echo "emoji=:no_entry_sign:" >> $GITHUB_OUTPUT
+
+          # completed cases
+          elif [[ "${{ needs.create-deploy-test.result }}" == "success" ]]; then
+            echo "status=completed_passed" >> $GITHUB_OUTPUT
+            echo "emoji=:white_check_mark:" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.create-deploy-test.result }}" == "failure" ]]; then
+            echo "status=completed_failed" >> $GITHUB_OUTPUT
+            echo "emoji=:no_entry_sign:" >> $GITHUB_OUTPUT
+
+          # skipped cases - order matters
+          elif [[ "${{ needs.check-for-prior-ft.outputs.found }}" == "true" ]]; then
+            echo "status=skipped_passed_prior" >> $GITHUB_OUTPUT
+            echo "emoji=:white_check_mark:" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.check-dockerfile-ft.outputs.found }}" == "false" ]]; then
+            echo "status=skipped_dockerfile" >> $GITHUB_OUTPUT
+            echo "emoji=:warning:" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.check-supported-build-system.outputs.supported }}" == "false" ]]; then
+            echo "status=skipped_build_system" >> $GITHUB_OUTPUT
+            echo "emoji=:warning:" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.get-mci-variables.outputs.ft_disable_dependabot }}" == "true" ]]; then
+            echo "status=skipped_dependabot" >> $GITHUB_OUTPUT
+            echo "emoji=:warning:" >> $GITHUB_OUTPUT
+          # check-for-prior-ft should be evaulated last since we don't care that we didn't run
+          # previously if any other conditions are met.
+          elif [[ "${{ needs.check-for-prior-ft.outputs.found }}" == "false" ]]; then
+            echo "status=skipped_failed_prior" >> $GITHUB_OUTPUT
+            echo "emoji=:no_entry_sign:" >> $GITHUB_OUTPUT
+          else
+            echo "status=unexpected" >> $GITHUB_OUTPUT
+            echo "emoji=:no_entry_sign:" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add ft_passed_SHORTSHA label if FT has completed successfully
+        id: add-ft-passed-label
+        uses: actions/github-script@v7
+        if: needs.create-deploy-test.result == 'success' && needs.check-for-prior-ft.outputs.found == 'false'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['${{ needs.generate-ft-passed-label.outputs.label }}']
+            })
+      - name: Add ft_skipped label if Dockerfile is missing
+        id: add-ft-skipped-label
+        uses: actions/github-script@v7
+        if: needs.check-dockerfile-ft.outputs.found == 'false'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['ft_skipped']
+            })

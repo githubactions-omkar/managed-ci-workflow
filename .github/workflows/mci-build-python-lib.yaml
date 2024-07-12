@@ -1,0 +1,91 @@
+#
+# Managed CI Workflow - Build
+#
+# DO NOT alter bookend download-artifact or upload-artifact steps, or their associated unzip and zip steps.
+# Doing so will break subsequent jobs in your managed-ci-workflow
+#
+name: Managed CI Build
+on:
+  workflow_call:
+
+jobs:
+  create-tag:
+    name: python-lib/create-tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Set env var VERSION_NUMBER
+      uses: glcp/mci-actions-version-number@v1
+      
+    - name: Git Tag
+      id: new-tag
+      run: |
+        if [ -z ${{ env.VERSION }} ]; then
+          TAG_VERSION='2.0'
+          echo "Version is ${TAG_VERSION}"
+        else
+          TAG_VERSION=${{ env.VERSION }}
+        fi
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          export tag=${TAG_VERSION}.${VERSION_NUMBER}
+          echo "Git Tag version: $tag"
+          git tag $tag
+          git push --tags
+        elif [ "${{ startsWith(github.ref, 'refs/heads/hotfix') }}" == "true" ]; then
+          export tag=${TAG_VERSION}.${VERSION_NUMBER}
+          git tag $tag
+          git push --tags
+        elif [[ "${{ github.event.action }}" == "released" ]]; then
+          export tag="${{ github.ref_name }}"
+          echo "Git Tag version: $tag"
+        else
+          export tag="${TAG_VERSION}.${VERSION_NUMBER}-dev"
+        fi       
+        echo "tag=$tag"
+        echo "tag=$tag" >> $GITHUB_OUTPUT
+
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+
+    outputs:
+      tag: ${{ steps.new-tag.outputs.tag }}
+
+
+  build-publish:
+    needs: create-tag
+    name: python-lib/build-publish
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.BUILD_CONTAINER_IMAGE }}
+      credentials:
+        username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+        password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        artifact-name: variables-build
+        
+    - uses: glcp/mci-actions-registry-login@v2
+      with:
+        secrets: ${{ toJson(secrets) }}
+
+
+    - name: Build and Publish
+      if: ( github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || github.event.action == 'released' ) 
+      uses: glcp/mci-actions-build/lib-build@v1
+      with:
+        tag: ${{ needs.create-tag.outputs.tag }}
+        secrets: ${{ toJSON(secrets) }}
+
+
+

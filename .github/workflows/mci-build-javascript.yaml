@@ -1,0 +1,151 @@
+name: Managed CI Build
+
+on:
+  workflow_call:
+
+jobs:
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ env.APP_ID }}
+      app-name: ${{ env.APP_NAME }}
+      target: ${{ env.TARGET }}
+      build-image: ${{ env.BUILD_CONTAINER_IMAGE }}
+      products: ${{ steps.mci-restore.outputs.products }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+
+  create-tag:
+    name: javascript/create-tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Set env var VERSION_NUMBER
+      uses: glcp/mci-actions-version-number@v1
+
+    - name: Assemble Git Tag
+      id: tag_version
+      shell: bash
+      run: |
+        MAJOR="2"
+        MINOR="0"
+        if [[ "${{ env.VERSION_MAJOR }}" != "" ]]; then MAJOR=${{ env.VERSION_MAJOR }}; fi
+        if [[ "${{ env.VERSION_MINOR }}" != "" ]]; then MINOR=${{ env.VERSION_MINOR }}; fi
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          export tag="${MAJOR}.${VERSION_NUMBER}.${MINOR}"
+          git tag $tag
+          git push --tags
+        elif [[ "${{ github.event.action }}" == "released" ]]; then
+          export tag="${MAJOR}.${{ github.run_number }}.${MINOR}"
+        elif [ "${{ startsWith(github.ref, 'refs/heads/hotfix') }}" == "true" ]; then
+          VERSION=$(echo ${{ github.ref_name }} | awk -F- '{print $2}')
+          echo $VERSION
+          HOTFIX_MAJOR=$(echo $VERSION | awk -F. '{print $1}')
+          HOTFIX_MINOR=$(echo $VERSION | awk -F. '{print $2}')
+          export tag="${HOTFIX_MAJOR}.${HOTFIX_MINOR}.${{ github.run_number }}"
+          git tag $tag
+          git push --tags
+        else
+          export tag="${MAJOR}.${VERSION_NUMBER}.${MINOR}-dev"
+        fi
+        echo "Git Tag version: $tag"
+        echo "tag=$tag" >> $GITHUB_OUTPUT
+
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
+      
+
+  build-javascript:
+    name: javascript/build
+    runs-on: ubuntu-latest
+    needs: [create-tag, get-mci-variables]
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.action == 'released')
+    env:
+       gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+       GLCP_ARTIFACTORY_TOKEN: ${{ secrets.GLCP_ARTIFACTORY_TOKEN }}
+       GLCP_NPM_READ: ${{ secrets.GLCP_NPM_READ }}
+    steps:
+      - name: Checkout Code for App Build
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Set defaults
+        run: |
+          if [[ -z "${{ env.JS_BUILD_SCRIPT }}" ]]; then 
+            echo "JS_BUILD_SCRIPT=build" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_BUILD_PATH }}" ]]; then 
+            echo "JS_BUILD_PATH=dist" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_WORKING_DIR }}" ]]; then 
+            echo "JS_WORKING_DIR=./" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PACKAGE_MANAGER }}" ]]; then 
+            echo "JS_PACKAGE_MANAGER=pnpm" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_CACHE_VERSION }}" ]]; then 
+            echo "JS_CACHE_VERSION=v1" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_NODE_VERSION }}" ]]; then 
+            echo "JS_NODE_VERSION=16" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PNPM_VERSION }}" ]]; then 
+            echo "JS_PNPM_VERSION=7" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PNPM_RECURSIVE }}" ]]; then 
+            echo "JS_PNPM_RECURSIVE=true" >> $GITHUB_ENV
+          fi
+
+        shell: bash
+
+      - uses: glcp/mfe-workflows/.github/actions/build@v1
+        with:
+          build-script: ${{ env.JS_BUILD_SCRIPT }}
+          build-path: ${{ env.JS_BUILD_PATH }}
+          working-directory: ${{ env.JS_WORKING_DIR }}
+          package-manager: ${{ env.JS_PACKAGE_MANAGER }}
+          cache-version: ${{ env.JS_CACHE_VERSION }}
+          public-url: /${{ env.APP_NAME }}/
+          node-version: ${{ env.JS_NODE_VERSION}}
+          pnpm-version: ${{ env.JS_PNPM_VERSION }}
+          pnpm-recursive: ${{ env.JS_PNPM_RECURSIVE }}
+
+
+  jira_update:
+    name:  javascript/jira-update
+    needs: [create-tag]
+    runs-on: ubuntu-latest
+    if: always() && ((github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) || github.event.action == 'released')
+    steps:
+    - name: Checkout Code for Coreupdate Push
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        artifact-name: variables-build
+
+    - name: Update Jira
+      uses: glcp/mci-actions-jira-update@v1.0
+      with:
+        pull_request_title: ${{ join(github.event.commits.*.message, ', ') }}
+        build_tag: ${{ needs.create-tag.outputs.tag }}
+        jira_user: ${{ secrets.CCS_JIRA_USER }}
+        jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+        gh_token: ${{ secrets.GLCP_GH_TOKEN }}

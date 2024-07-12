@@ -1,0 +1,52 @@
+# pre-check
+  The validation of the CI is done on pre-check. The workflow used for the execution of pre-check is [mci-pre-check.yaml](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-pre-check.yaml). For python based application the **secret-scanner, mci-python** jobs are triggered.
+
+The jobs that are executed for python based application on pre-check
+
+| _Jobs_             | _Description_                                                                  |
+|--------------------|--------------------------------------------------------------------------------|
+| **secret-scanner** | Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner. |
+| **mci-python**     | python job is intended for application based on **python**. The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'python'**].|
+
+## secret-scanner:
+  Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner.
+  The workflow used for the execution of secret-scanner is [scanning-workflow.yml](https://github.com/glcp/Secret-Scan-Tool/blob/main/.github/workflows/scanning-workflow.yml)
+
+### Deafult Inputs for secret-scan
+
+| _Input_             | _Default_                               | _Description_                                                       | _Required_  |
+|:-------------------:|:----------------------------------------|:--------------------------------------------------------------------|:------------|
+| repo                | ```${{github.event.repository.name}}``` | Name of the repository where secret scan need to be executed        | true        |
+| branch              | ```${{github.ref_name}}```              | Branch in which secret-scan need to be executed on the given repo   | true        |
+
+## 2. malware-scanner:
+  Malware Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the malware in the repo on a Pull Request and reports it in the comments of the PR. if any malware is found the workflow will fail. The scan summary is reported to the comments of the PR irrespective of the result of the scan.
+  The workflow used for the execution of malware-scanner is [malware scan workflow](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-clamav.yaml). There is no varaiable or parameter needed for this worklow.
+
+##  mci-python:
+The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'python'**]. 
+
+  **when the conditions are satisfied the job does the following actions in order.**
+
+  |   | _description_                          | _actions_                                                                             | _execution_                          |
+  |:-:|:---------------------------------------|:--------------------------------------------------------------------------------------|:-------------------------------------|
+  | 1 | Clone the Repository                   |  ```actions/checkout@v3.3.0```                                                        | The step is executed on all triggers |
+  | 2 | set-environment variables for the job. | ```actions-tools/yaml-outputs@v2```                                                   | The step is executed on all triggers |
+  | 3 | PR title validation                    |  ```glcp/ccs-automation/ci_cd_commons/pr_title_validation@v1.0```                       | The step is executed only on PR |
+  | 4 | Cloning CCS DEV Environment repository | ```actions/checkout@v3.3.0```                                                         | The step is executed on all triggers |
+  | 5 | Cloning the application repository     | ```actions/checkout@v3.3.0```                                                         | The step is executed on all triggers |
+  | 6 | Cloning the CCS automation repository  | ```actions/checkout@v3.3.0```                                                         | The step is executed on all triggers |
+  | 7 | zip and upload artifacts with names workspace and workspace-clean-artifacts to use them in future jobs | ```actions/upload-artifact@v3``` | The step is executed on all triggers |
+
+### Inputs/Secrets for mci-python
+
+| _Input_            | _Default_                                   | _Description_                                                    | _Required_ |
+|:-------------------|:--------------------------------------------|:-----------------------------------------------------------------|:---------- |
+| pull_request_title | ```${{ github.event.pull_request.title }``` | The title of PR                                                  | true       |
+| jira_user          | ```${{ secrets.CCS_JIRA_USER }}```          | User to connect HPE JIRA                                         | true       |
+| jira_apikey        | ```${{ secrets.CCS_JIRA_APIKEY }}```        | API Key to connect HPE JIRA                                      | true       |
+| gh_token           | ```${{ secrets.GLCP_GH_TOKEN }}```          | Github Token                                                     | true       |
+| DEV_ENV_TAG        | ```${{ env.DEV_ENV_TAG }}```                | Tag/Reference used to clone the glcp/dev-env repository          | false      |
+| DEV_ENV_DIR        | ```${{ env.DEV_ENV_DIR }}```                | Path to which glcp/dev-env repository is cloned                  | true       |
+| APP_NAME           | ```${{ env.APP_NAME }}```                   | Application Name, Usually same as the repository name            | true       |
+

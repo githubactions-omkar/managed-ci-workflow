@@ -1,0 +1,204 @@
+#
+# Managed CI Workflow - Build
+#
+name: Managed CI Build
+on:
+  workflow_call:
+
+jobs:
+  create-tag:
+    name: terraform/create-tag
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/heads/infra-release') || github.event_name == 'workflow_dispatch' 
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Git Tag
+      uses: glcp/mci-actions-tagging@v1
+      with:
+        prefix: ${{ env.PREFIX }}
+      id: new-tag
+    
+    - run: echo "${{ steps.new-tag.outputs.gittag }}"
+    - run: echo "${{ steps.new-tag.outputs.containerVersion }}"
+
+    outputs:
+      tag: ${{ steps.new-tag.outputs.gittag }}
+      containerVersion: ${{ steps.new-tag.outputs.containerVersion }}
+
+  build-publish:
+    name: terraform/build-publish
+    permissions: 
+      id-token: write 
+      contents: read
+    needs: create-tag
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/heads/infra-release') || github.event_name == 'workflow_dispatch' 
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+  
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+  
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+  
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Configure AWS Credentials
+        id: assume-role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: "${{ env.AWS_OIDC_ROLE }}" 
+          role-session-name: mci-github
+          aws-region: "${{ env.AWS_REGION }}"
+  
+      - name: Get Amazon ECR Login Token
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: 'true'
+          registries: "${{ env.AWS_ACCOUNT_ID }}"
+          
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_INSTALLATION_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_PRIVATE_KEY }}
+
+      - name: Use temporary github token as Env variable
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.glcp-gh-token.outputs.token }}
+        run: |
+          echo "The generated token is masked: ${GITHUB_APP_TOKEN}"
+          echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
+        shell: bash 
+        
+      - name: Build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: ${{ env.DOCKER_PUSH }}
+          tags: |
+            ${{ env.QUAY_REGISTRY }}/${{ env.CONTAINER_NAME }}:${{ needs.create-tag.outputs.tag }}
+            ${{ steps.ecr.outputs.registry }}/cloudops/${{ env.CONTAINER_NAME }}:${{ needs.create-tag.outputs.tag }}
+          secrets: |
+            "github_token=${{ env.GITHUB_APP_TOKEN }}"
+  
+      - name: Set ARTIFACT_URLS with sha1s
+        run: |
+          docker pull ${{ env.QUAY_REGISTRY }}/${{ env.CONTAINER_NAME }}:${{ needs.create-tag.outputs.tag }}
+          export product_name=${{ env.APP_NAME }}
+          export artifact_url="$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.QUAY_REGISTRY }}/${{ env.CONTAINER_NAME }}:${{ needs.create-tag.outputs.tag }})"
+          yq -i '.SBOM += [{"PRODUCT_NAME": strenv(product_name), "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+        shell: bash
+  
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+          
+      - uses: glcp/mci-actions-workspace-backup@v1
+        with:
+          artifact-name: workspace-build
+          zip-name: workspace-build.zip
+
+  clusterdb:
+    name: terraform/clusterdb
+    needs: [create-tag, build-publish]
+    runs-on: CCP-allow-listed-ip
+    steps:
+      - name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-build
+          zip-name: workspace-build.zip
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: ClusterDB update
+        if: env.CLUSTERDB_UPDATE == 'true'
+        shell: bash
+        run: |
+          echo "================================"
+          echo "Parameters for ClusterDB update"
+          echo "================================"
+          CONTAINER_VERSION="${{ needs.create-tag.outputs.containerVersion }}"
+          GIT_LOG=$(git log -n 1 --pretty=format:"%h - %an, %ar : %s")
+          CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+          GIT_COMMIT="${{ github.sha }}"
+          echo " "
+          echo "=============================="
+          echo "Construct JSON from Parameters"
+          echo "=============================="
+          json_data=$(cat <<EOF
+          {
+            "version": "$CONTAINER_VERSION",
+            "description": "$GIT_LOG",
+            "status": "active",
+            "meta_data": {
+              "name": "$CONTAINER_NAME",
+              "kind": "container",
+              "git_commit_id": "$GIT_COMMIT"
+            }
+          }
+          EOF
+          )
+
+          echo "$json_data" > post.json
+          cat post.json
+          echo " "
+          echo " "
+          if [[ "${{ env.PROD_UPDATE }}" == true ]]; then
+            echo "ClusterDB update in PROD is set to true"
+            echo "=================================="
+            echo "Updating Version in PROD ClusterDB"
+            echo "=================================="     
+            curl --location --request POST "${{ env.CDB_URL_PROD }}/$CONTAINER_NAME/version" \
+                 --header 'x-api-key: ${{secrets.CDB_PASSWORD_PROD}}' \
+                 --header 'Content-Type: application/json' \
+                 --data @post.json \
+                 --fail-with-body
+            retVal=$?
+            if [ $retVal -ne 0 ]; then
+              echo "Error"
+              exit $retVal
+            fi
+          else
+            echo "Skipping ClusterDB update in PROD"
+          fi
+
+          if [[ "${{ env.QA_UPDATE }}" == true ]]; then
+            echo "ClusterDB update in QA is set to true"
+            echo "================================"
+            echo "Updating Version in QA ClusterDB"
+            echo "================================"     
+            curl --location --request POST "${{ env.CDB_URL_QA }}/$CONTAINER_NAME/version" \
+                 --header 'x-api-key: ${{secrets.CDB_PASSWORD_QA}}' \
+                 --header 'Content-Type: application/json' \
+                 --data @post.json \
+                 --fail-with-body
+            retVal=$?
+            if [ $retVal -ne 0 ]; then
+              echo "Error"
+              exit $retVal
+            fi
+          else
+            echo "Skipping ClusterDB update in QA"
+          fi

@@ -1,0 +1,7 @@
+startTime: 2023-06-30-06-01
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 1
+  deployedWorkflowsByRepository:
+    aluong-t1: []

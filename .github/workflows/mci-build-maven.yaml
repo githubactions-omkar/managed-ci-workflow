@@ -1,0 +1,286 @@
+#
+# Managed CI Workflow - Build
+#
+# DO NOT alter bookend download-artifact or upload-artifact steps, or their associated unzip and zip steps.
+# Doing so will break subsequent jobs in your managed-ci-workflow
+#
+name: Managed CI Build
+on:
+  workflow_call:
+
+env:
+  quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+  quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+  jfrog_user: ${{ secrets.CCS_JFROG_USERNAME }}
+  JFROG_USERNAME: ${{ secrets.CCS_JFROG_USERNAME }}
+  jfrog_passwd: ${{ secrets.CCS_JFROG_PASSWORD }}
+  JFROG_PASSWORD: ${{ secrets.CCS_JFROG_PASSWORD }}
+  updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+  updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+  updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+  jira_user: ${{ secrets.CCS_JIRA_USER }}
+  jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+  COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+  COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+  COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+  MAVEN_HOME: /usr/share/maven
+  MAVEN_CONFIG: /root/.m2
+  MOCK_APP_NAME: mock-ccs-cluster
+  DEV_ENV_DIR: subscription-management-dev-env
+  DC_PROJECT_NAME: subscription-management-ci
+  MARKER_FEATURE_NOT_READY: FeatureNotReady
+  MARKER_REGRESSION: Regression
+  MARKER_INTERNAL: Internal
+
+jobs:
+  get-vars:
+    name: python/get-vars
+    runs-on: ubuntu-latest
+    outputs:
+      skip-coreupdate-push: ${{ steps.outvars.outputs.skip-coreupdate-push }}
+      JFROG_USERNAME: ${{ steps.jfrog-creds.outputs.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ steps.jfrog-creds.outputs.JFROG_PASSWORD }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+      - name: Set output variables
+        id: outvars
+        run: |
+          echo "skip-coreupdate-push=$SKIP_COREUPDATE_PUSH" >> $GITHUB_OUTPUT
+          
+      - name: Set JFrog Credentials
+        id: jfrog-creds
+        uses: glcp/mci-action-jfrog-credentials@v1.0.0
+        with:
+          JFROG_URL: $JFROG_URL
+          secrets: ${{ toJson(secrets) }
+
+  create-tag:
+    runs-on: ubuntu-latest
+    name: maven/create-tag
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: Assemble Git Tag
+        id: tag_version
+        uses: glcp/mci-actions-version-tag/java@v1
+
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
+
+  set-vals:
+    runs-on: ubuntu-latest
+    name: maven/set-vals
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set output vars
+        id: the-vars
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+              # use "ci-stage" for PR 
+              docker_target=ci-stage
+          else
+              # use "prod-image" for merge/push and manual runs
+              docker_target=prod-image
+          fi
+          if [ "$SKIP_DOCKER_PUSH" == "true" ]; then
+              docker_push=false
+          else
+              docker_push=true
+          fi
+          echo "docker_push=$docker_push" 
+          echo "docker_target=$docker_target" 
+          # ----
+          echo "docker_push=$docker_push" >> $GITHUB_OUTPUT
+          echo "docker_target=$docker_target" >> $GITHUB_OUTPUT
+
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+
+    outputs:
+        docker_push: ${{ steps.the-vars.outputs.docker_push }}
+        docker_target: ${{ steps.the-vars.outputs.docker_target }}
+
+  build-app:
+    runs-on: ubuntu-latest
+    name: maven/build-app
+    if: |
+      github.event_name == 'workflow_dispatch' || 
+      (github.event_name == 'push' && 
+       github.ref_name == github.event.repository.default_branch ) || 
+      github.event.action == 'released' ||
+      (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/hotfix')))
+    needs: [create-tag, set-vals]
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - name: Docker App Build
+        uses: glcp/mci-actions-docker-build-push-app@v2
+        with:
+          appname: ${{ env.APP_NAME }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+          registry: quay.io
+          image_registry: "quay.io/ccsportal/${{ env.APP_NAME }}"
+          target: ${{ needs.set-vals.outputs.docker_target }}
+          docker_push: ${{ needs.set-vals.outputs.docker_push }}
+          secrets: ${{ toJSON(secrets) }}
+
+  build-automation:
+    name: maven/build-automation
+    runs-on: ubuntu-latest
+    needs: [create-tag, build-app, set-vals]
+    if: |
+      github.event_name == 'workflow_dispatch' || 
+      (github.event_name == 'push' && 
+       github.ref_name == github.event.repository.default_branch ) || 
+      github.event.action == 'released' ||
+      (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/hotfix')))
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Check for Dockerfile_FT existence
+        id: check_dockerfile_ft
+        uses: glcp/file-existence-action@v2
+        with:
+          files: "./tests/feature_test/docker/Dockerfile_FT"
+
+      - name: Docker Automation Build
+        if: steps.check_dockerfile_ft.outputs.files_exists == 'true'
+        uses: glcp/mci-actions-docker-build-push-automation@v2
+        with:
+          appname: ${{ env.APP_NAME }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+          registry: quay.io
+          image_registry: ${{ env.IMAGE_REGISTRY }}
+          docker_push: ${{ needs.set-vals.outputs.docker_push }}
+          secrets: ${{ toJSON(secrets) }}
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set ARTIFACT_URLS with sha1s
+        run: |
+          docker pull quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}
+          export product_name=${{ env.APP_NAME }}
+          export artifact_url="$(docker inspect --format='{{index .RepoDigests 0}}' quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }})"
+          yq -i '.SBOM += [{"PRODUCT_NAME": strenv(product_name), "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+
+          if [ "$SKIP_DOCKER_PUSH" == "true" ]; then
+              echo "skipping; SKIP_DOCKER_PUSH is set to 'true'"
+              exit 0
+          fi
+          
+          if [[ "${{ steps.check_dockerfile_ft.outputs.files_exists }}" == "true" ]]; then
+            docker pull quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}-automation
+            export product_name="${{ env.APP_NAME }}-automation"
+            export artifact_url="$(docker inspect --format='{{index .RepoDigests 0}}' quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}-automation)"
+            yq -i '.SBOM += [{"PRODUCT_NAME": strenv(product_name), "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+          fi
+        shell: bash
+        
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+
+  coreupdate:
+    needs: [get-vars, create-tag, build-app, build-automation]
+    name: maven/coreupdate
+    runs-on: ccs-runner
+    if: (needs.get-vars.outputs.skip-coreupdate-push != 'true') &&
+        (github.event_name == 'workflow_dispatch' || github.event.action == 'released' || github.ref_name == github.event.repository.default_branch || (startsWith(github.ref, 'refs/heads/hotfix')) )
+    steps:
+      - name: Checkout Code for Coreupdate Push
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Channel
+        id: channel
+        uses: glcp/mci-actions-coreupdate-channel@v1.01
+
+      - name: Coreupdate Push
+        if: steps.channel.outputs.channel != ''
+        uses: glcp/mci-actions-coreupdate@v1.0
+        env:
+          jfrog_username: ${{ needs.get-vars.outputs.JFROG_USERNAME }}
+          jfrog_password: ${{ needs.get-vars.outputs.JFROG_PASSWORD }}
+        with:
+          appname: ${{ env.APP_NAME }}
+          appid: ${{ env.APP_ID }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+          image_registry: "quay.io/ccsportal/${{ env.APP_NAME }}"
+          channel: ${{ steps.channel.outputs.channel }}
+          UPDATECTL_USER: ${{ secrets.CCS_UPDATECTL_USER }}
+          UPDATECTL_SERVER: ${{ secrets.CCS_UPDATECTL_SERVER }}
+          UPDATECTL_KEY: ${{ secrets.CCS_UPDATECTL_KEY }}
+          COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+          COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+          COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+
+  jira_update:
+    needs: [coreupdate, create-tag]
+    runs-on: ubuntu-latest
+    name:  maven/jira-update
+    if: (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) || github.event.action == 'released' || (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/hotfix')))
+    steps:
+      - name: Checkout Code for Coreupdate Push
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Update Jira
+        uses: glcp/mci-actions-jira-update@v1.0
+        with:
+          pull_request_title: ${{ join(github.event.commits.*.message, ', ') }}
+          build_tag: ${{ needs.create-tag.outputs.tag }}
+          jira_user: ${{ secrets.CCS_JIRA_USER }}
+          jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+          gh_token: ${{ steps.glcp-gh-token.outputs.token }}

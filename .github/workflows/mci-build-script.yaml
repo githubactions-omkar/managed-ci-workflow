@@ -1,0 +1,53 @@
+name: Managed CI Build
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Git Tag
+      id: new-tag
+      shell: bash
+      run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          export tag="${{ env.VERSION }}.${{ github.run_number }}"
+          git tag $tag
+          git push --tags
+          else
+          export tag="${{ env.VERSION }}.${{ github.run_number }}-dev"
+          fi
+          echo "Git Tag version: $tag"
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          
+    - name: Registry login
+      uses: glcp/mci-actions-registry-login@v1
+      with: 
+        secrets: ${{ toJson(secrets) }}
+
+    - name: Build Script Run
+      id: build
+      shell: bash
+      run: |
+        env
+
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+        if [[ "${{ env.DOCKER_PUSH }}" == "" ]]; then DOCKER_PUSH_VAR=1;else DOCKER_PUSH_VAR=${{ env.DOCKER_PUSH }}; fi
+        else
+        DOCKER_PUSH_VAR=0
+        fi
+
+        if [[ "${{ env.SCRIPT_ARGS }}" == "" ]]; then SCRIPT_ARGS_VAR="$(echo ${{ steps.new-tag.outputs.tag }})";else SCRIPT_ARGS_VAR=${{ env.SCRIPT_ARGS }}; fi
+        DOCKER_PUSH=${DOCKER_PUSH_VAR} ${{ env.SCRIPT_TO_RUN }} ${SCRIPT_ARGS_VAR}  
+
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+

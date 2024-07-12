@@ -1,0 +1,864 @@
+name: Deploy and Test the Application on Integration Cluster
+
+on:
+  workflow_call:
+    inputs:
+      appname:
+        required: true
+        type: string
+      appid:
+        required: true
+        type: string
+      image_registry:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+      registry:
+        required: true
+        type: string
+      build_image:
+        type: string
+        required: false
+      target:
+        type: string
+        required: false
+      ccs_cluster:
+        type: string
+        required: false
+        default: "polaris-us-west-2"
+      test_cluster:
+        type: string
+        required: false
+        default: "pyxis-us-west-2"
+      cluster_prefix:
+        type: string
+        required: false
+        default: "polaris"
+      JFROG_URL:
+        type: string
+        required: true
+    secrets:
+      MCI_QUAY_USER:
+        required: true
+      MCI_QUAY_PASSWORD:
+        required: true
+      CCS_QUAY_CCSPORTAL_BUILDER:
+        required: true
+      CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD:
+        required: true
+      CCS_JFROG_USERNAME:
+        required: true
+      CCS_JFROG_PASSWORD:
+        required: true
+      TESTRAIL_USERNAME:
+        required: true
+      TESTRAIL_PASSWORD:
+        required: true
+      GLCP_GH_TOKEN:
+        required: true
+      aws_access_key_id:
+        required: true
+      aws_secret_access_key:
+        required: true
+      qa_pem:
+        required: true
+      updatectl_user:
+        required: true
+      updatectl_server:
+        required: true
+      updatectl_key:
+        required: true
+      jira_user:
+        required: true
+      jira_apikey:
+        required: true
+      coreroller_user:
+        required: true
+      coreroller_server:
+        required: true
+      coreroller_key:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      SONAR_HOST_URL:
+        required: true
+      MCI_READ_ONLY_PRIVATE_KEY:
+        required: true
+    outputs:
+      allure_report_url:
+        description: "Feature Tests Allure Report URL (GitHub Pages)"
+        value: ${{ jobs.Deploy_and_Test.outputs.allure_report_url }}
+
+env:
+  CCS_Cluster: ${{ inputs.ccs_cluster }}
+  Test_Cluster: ${{ inputs.test_cluster }}
+  cluster_prefix: ${{ inputs.cluster_prefix }}
+  Env: "qa"
+  Spinnaker_job_url: "pipelines/v2/ccsdeploy/ccsdeploy"
+  ExtTestType: "Regression"
+  IntTestType: "Internal"
+
+jobs:
+  getbuildsystem:
+   runs-on: ubuntu-latest
+   outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+   steps:
+        - uses: glcp/mci-actions-get-build-system@v1.0.0
+          id: get_build_system
+          with:
+            gh_token: ${{ secrets.GITHUB_TOKEN }}
+            vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }}
+            git_ref: ${{ github.ref }}
+
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ env.APP_ID }}
+      app-name: ${{ env.APP_NAME }}
+      target: ${{ env.TARGET }}
+      build-image: ${{ env.BUILD_CONTAINER_IMAGE }}
+      ft-test-repo: ${{ env.FT_REPOSITORY }}
+      ft-test-repo-dockerfile: ${{ env.FT_DOCKERFILE_PATH }}
+      ft-deploy-repo: ${{ env.FT_DEPLOY_REPOSITORY }}
+      ft-deploy-repo-path: ${{ env.FT_DEPLOY_REPOSITORY_PATH }}
+      products: ${{ steps.mci-restore.outputs.products }}
+      JFROG_USERNAME: ${{ steps.jfrog-creds.outputs.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ steps.jfrog-creds.outputs.JFROG_PASSWORD }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+      - name: Set JFrog Credentials
+        id: jfrog-creds
+        uses: glcp/mci-action-jfrog-credentials@v1.0.0
+        with:
+          JFROG_URL: $JFROG_URL
+          secrets: ${{ toJson(secrets) }}
+
+  Notify_About_Start:
+    runs-on: ubuntu-latest
+    name: Update PR with FT start message
+    steps:
+      - name: Set Start Time
+        shell: bash
+        run: |
+          ft_start_time="$(date)"
+          echo "ft_start_time=${ft_start_time}"
+          echo "ft_start_time=${ft_start_time}" >> $GITHUB_ENV
+
+      - name: FT IN PROGRESS - write to the PR
+        uses: glcp/pr-update-action@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          base-branch-regex: '.*'
+          body-template: |
+            - **[🏁 FT IN PROGRESS #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})** - `Time Started: ${{ env.ft_start_time }}`
+          body-update-action: 'suffix'
+
+  create-tag:
+    name: Create Git Tag
+    needs: [getbuildsystem, get-mci-variables]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: glcp/mci-actions-variables-restore@v3
+      with:
+        source: checkout
+
+    - name: Set env var VERSION_NUMBER
+      uses: glcp/mci-actions-version-number@v1
+
+    - name: Assemble Git Tag
+      id: tag_version
+      shell: bash
+      run: |
+        if [[ "${{ needs.getbuildsystem.outputs.output }}" == "golang" ]]; then
+        export tag="${{ env.VERSION }}.${VERSION_NUMBER}-pr"
+        else      
+        MAJOR="2"
+        MINOR="0"
+        if [[ "${{ env.VERSION_MAJOR }}" != "" ]]; then MAJOR=${{ env.VERSION_MAJOR }}; fi
+        if [[ "${{ env.VERSION_MINOR }}" != "" ]]; then MINOR=${{ env.VERSION_MINOR }}; fi
+        export tag="${MAJOR}.${VERSION_NUMBER}.${MINOR}-pr"
+        fi
+        echo $tag
+        prefix=${tag%%-*}
+        suffix=${tag#"$prefix"}
+        if [[ $(grep -o "\." <<< "$prefix" | wc -l) -eq 1 ]]; then
+          prefix="${prefix}.0"
+        fi
+        new_tag="${prefix}${suffix}"
+        echo "Git Tag version: $new_tag"
+        echo "tag=$new_tag" >> $GITHUB_OUTPUT
+    outputs:
+      tag: ${{ steps.tag_version.outputs.tag }}
+
+  Docker_APP_Build_Maven:
+    name: Create and push Maven application container
+    if: needs.getbuildsystem.outputs.output == 'maven' && inputs.build_image != ''
+    needs: [getbuildsystem, get-mci-variables, Notify_About_Start, create-tag]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs.build_image }}
+      credentials:
+        username: ${{ secrets.MCI_QUAY_USER }}
+        password: ${{ secrets.MCI_QUAY_PASSWORD }}
+    env:
+      MAVEN_HOME: /usr/share/maven
+      MAVEN_CONFIG: /root/.m2
+      MOCK_APP_NAME: mock-ccs-cluster
+      DEV_ENV_DIR: subscription-management-dev-env
+      DC_PROJECT_NAME: subscription-management-ci
+      MARKER_FEATURE_NOT_READY: FeatureNotReady
+      MARKER_REGRESSION: Regression
+      MARKER_INTERNAL: Internal
+      quay_username: ${{ secrets.MCI_QUAY_USER }}
+      quay_password: ${{ secrets.MCI_QUAY_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      JFROG_USERNAME: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      JFROG_PASSWORD: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      updatectl_user: ${{ secrets.updatectl_user }}
+      updatectl_server: ${{ secrets.updatectl_server }}
+      updatectl_key: ${{ secrets.updatectl_key }}
+      jira_user: ${{ secrets.jira_user }}
+      jira_apikey: ${{ secrets.jira_apikey }}
+      COREROLLER_USER: ${{ secrets.coreroller_user }}
+      COREROLLER_SERVER: ${{ secrets.coreroller_server }}
+      COREROLLER_KEY: ${{ secrets.coreroller_key }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          chmod +x ./install-dependencies.sh
+          ./install-dependencies.sh
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: Assemble Git Tag
+        id: tag-version
+        uses: glcp/mci-actions-version-tag/java@v1
+        with:
+          push_tag: false
+
+      - name: Run build_ut.sh
+        # This creates files and dirs used in the "docker/Dockerfile"
+        shell: bash
+        run: |
+          chmod +x ./build_ut.sh
+          ./build_ut.sh --ut-skip
+
+      - name: Docker Push
+        uses: glcp/mci-actions-docker-build-push-app@v2
+        with:
+          appname: ${{ inputs.appname }}
+          appid: ${{ inputs.appid }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+
+          registry: quay.io
+          image_registry: ${{ inputs.image_registry }}
+          secrets: ${{ toJSON(secrets) }}
+          target: ${{ inputs.target }}
+
+  Docker_Build:
+    needs: [getbuildsystem, Notify_About_Start, get-mci-variables, create-tag]
+    runs-on: ubuntu-latest
+    if: (needs.getbuildsystem.outputs.output == 'golang' || needs.getbuildsystem.outputs.output == 'python') &&
+        needs.get-mci-variables.outputs.products != ''
+    name: Multi Build
+    strategy:
+      matrix: ${{fromJson(needs.get-mci-variables.outputs.products)}}
+    steps:
+      - name: Application Docker Container
+        shell: bash
+        run: |
+          echo "Creating Container for ${{ matrix.DOCKERFILE_PATH }} (${{ matrix.BUILD_TYPE }})"
+
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: existing
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Determine test repo (if any)
+        shell: bash
+        id: ft-variables
+        run: |
+          if [[ "${{ matrix.BUILD_TYPE }}" == "automation" ]]; then
+            # TESTS - product-specific test repo values with fallback to global values
+            ft_test_repo_and_ref=${{ matrix.FT_REPOSITORY }}
+            ft_test_repo_and_ref=${ft_test_repo_and_ref:-${{ needs.get-mci-variables.outputs.ft-test-repo }}}
+            ft_test_repo=$(echo $ft_test_repo_and_ref | awk -F@ '{print $1}')
+            echo "ft_test_repo=$ft_test_repo" >> $GITHUB_OUTPUT
+
+            ft_test_repo_ref=$(echo $ft_test_repo_and_ref | awk -F@ '{print $2}')
+            echo "ft_test_repo_ref=$ft_test_repo_ref" >> $GITHUB_OUTPUT
+
+            dockerfile_path=${{ matrix.DOCKERFILE_PATH }}
+            dockerfile_path=$(echo ${dockerfile_path:-${{ needs.get-mci-variables.outputs.ft-test-repo-dockerfile }}} | sed 's,^./,,') # either of these two sources could have leading ./
+            dockerfile_path=${dockerfile_path:-'tests/feature_test/docker/Dockerfile_FT'}
+
+            # FIXME?  At some point we may want to allow context to be overridden
+            if [[ -n "$ft_test_repo" ]]; then
+              docker_context="tests"
+            else
+              docker_context="."
+            fi
+            echo "docker_context=$docker_context" >> $GITHUB_OUTPUT
+            echo "dockerfile_path=${docker_context}/${dockerfile_path}" >> $GITHUB_OUTPUT
+          else
+            echo "docker_context=." >> $GITHUB_OUTPUT
+            dockerfile_path=$(echo ${{ matrix.DOCKERFILE_PATH }} | sed 's,^./,,')
+            dockerfile_path=${dockerfile_path:-'docker/Dockerfile'}
+            echo "dockerfile_path=${dockerfile_path}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show FT Variables
+        shell: bash
+        id: show-ft-variables
+        run: |
+          if [[ "${{ matrix.BUILD_TYPE }}" == "automation" ]]; then
+            echo "Test repository: ${{ steps.ft-variables.outputs.ft_test_repo }}"
+            echo "Test repository ref: ${{ steps.ft-variables.outputs.ft_test_repo_ref }}"
+          fi
+          echo "dockerfile_path: ${{ steps.ft-variables.outputs.dockerfile_path }}"
+          echo "context: ${{ steps.ft-variables.outputs.docker_context }}"
+
+      - name: Clone Test Repository
+        uses: actions/checkout@v3.3.0
+        if: |
+          matrix.BUILD_TYPE == 'automation' &&
+          steps.ft-variables.outputs.ft_test_repo != '' &&
+          steps.ft-variables.outputs.ft_test_repo_ref != ''
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: ${{ steps.ft-variables.outputs.ft_test_repo }}
+          ref: ${{ steps.ft-variables.outputs.ft_test_repo_ref }}
+          path: tests
+
+      - name: Show workspace hierarchy
+        shell: bash
+        id: show-test-repo
+        if: |
+          matrix.BUILD_TYPE == 'automation' &&
+          steps.ft-variables.outputs.ft_test_repo != '' &&
+          steps.ft-variables.outputs.ft_test_repo_ref != ''
+        run: |
+          ls -lR
+
+      - name: Docker Push
+        uses: glcp/mci-actions-docker-build-push@v1.1
+        with:
+          dockerfile_path: ${{ steps.ft-variables.outputs.dockerfile_path }}
+          context: ${{ steps.ft-variables.outputs.docker_context }}
+          image_registry: ${{ matrix.IMAGE_REGISTRY }}
+          tag: ${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+          target: ${{ matrix.TARGET }}
+          appname: ${{ matrix.APP_NAME }}
+          appid: ${{ matrix.APP_ID }}
+          registry: quay.io
+          build_type: ${{ matrix.BUILD_TYPE }}
+          base_image: ${{ matrix.base_image }}
+          docker_push: ${{ matrix.DOCKER_PUSH }}
+          secrets: ${{ toJSON(secrets) }}
+
+  Docker_APP_Build:
+    needs: [getbuildsystem, get-mci-variables, Notify_About_Start, create-tag]
+    runs-on: ubuntu-latest
+    if: needs.getbuildsystem.outputs.output != 'maven' &&
+        needs.get-mci-variables.outputs.products == ''
+    name: Single App Image Build and Push
+    steps:
+      - name: Application Docker Container
+        shell: bash
+        run: |
+          echo "Creating Application Docker Container"
+
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Docker Push
+        uses: glcp/mci-actions-docker-build-push-app@v2
+        with:
+            appname: ${{ inputs.appname }}
+            appid: ${{ inputs.appid }}
+            tag: ${{ needs.create-tag.outputs.tag }}
+
+            registry: quay.io
+            image_registry: ${{ inputs.image_registry }}
+            secrets: ${{ toJSON(secrets) }}
+
+  Docker_Automation_Build:
+    needs: [Notify_About_Start, get-mci-variables, create-tag]
+    runs-on: ubuntu-latest
+    name: Single Automation Image Build and Push
+    if: needs.get-mci-variables.outputs.products == ''
+    steps:
+      - name: Automation Docker Container
+        shell: bash
+        run: |
+          echo "Creating Automation Docker Container"
+
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: existing
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Determine test repo (if any)
+        shell: bash
+        id: ft-variables
+        run: |
+          # TESTS - product-specific test repo values with fallback to global values
+          ft_test_repo_and_ref=${{ needs.get-mci-variables.outputs.ft-test-repo }}
+          ft_test_repo=$(echo $ft_test_repo_and_ref | awk -F@ '{print $1}')
+          echo "ft_test_repo=$ft_test_repo" >> $GITHUB_OUTPUT
+
+          ft_test_repo_ref=$(echo $ft_test_repo_and_ref | awk -F@ '{print $2}')
+          echo "ft_test_repo_ref=$ft_test_repo_ref" >> $GITHUB_OUTPUT
+
+          dockerfile_path=$(echo ${{ needs.get-mci-variables.outputs.ft-test-repo-dockerfile }} | sed 's,^./,,')
+          dockerfile_path=${dockerfile_path:-'tests/feature_test/docker/Dockerfile_FT'}
+
+          # FIXME?  At some point we may want to allow context to be overridden
+          if [[ -n "$ft_test_repo" ]]; then
+            docker_context="tests"
+          else
+            docker_context="."
+          fi
+          echo "docker_context=$docker_context" >> $GITHUB_OUTPUT
+          echo "dockerfile_path=${docker_context}/${dockerfile_path}" >> $GITHUB_OUTPUT
+
+      - name: Clone Test Repository
+        uses: actions/checkout@v3.3.0
+        if: |
+          steps.ft-variables.outputs.ft_test_repo != '' &&
+          steps.ft-variables.outputs.ft_test_repo_ref != ''
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: ${{ steps.ft-variables.outputs.ft_test_repo }}
+          ref: ${{ steps.ft-variables.outputs.ft_test_repo_ref }}
+          path: tests
+
+      - name: Docker Push
+        uses: glcp/mci-actions-docker-build-push-automation@v2.1
+        with:
+          appname: ${{ inputs.appname }}
+          appid: ${{ inputs.appid }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+
+          registry: quay.io
+          image_registry: ${{ inputs.image_registry }}
+          secrets: ${{ toJSON(secrets) }}
+          dockerfile_path: ${{ steps.ft-variables.outputs.dockerfile_path }}
+          context: ${{ steps.ft-variables.outputs.docker_context }}
+
+  coreupdate_job:
+    name: Create and push k8s artifacts
+    needs: [ Docker_Build, Docker_APP_Build, Docker_APP_Build_Maven, Docker_Automation_Build, get-mci-variables, create-tag ]
+    if: always() && !failure() && !cancelled()
+    runs-on: ccs-runner
+    env:
+      jfrog_username: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_password: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Determine deploy repo (if any)
+        shell: bash
+        id: ft-variables
+        run: |
+          # DEPLOY - product-specific deploy repo values with fallback to global values
+          ft_deploy_repo_and_ref=${{ needs.get-mci-variables.outputs.ft-deploy-repo }}
+          echo "ft_deploy_repo=$(echo $ft_deploy_repo_and_ref | awk -F@ '{print $1}')" >> $GITHUB_OUTPUT
+          echo "ft_deploy_repo_ref=$(echo $ft_deploy_repo_and_ref | awk -F@ '{print $2}')" >> $GITHUB_OUTPUT
+
+          # Directory within the workspace for deployment manifests
+          # May or may not contain a checked out remote repository
+          # FIXME?  Might want to parameterize this at some point
+          ft_deploy_ws_dir="deploy"
+          echo "ft_deploy_ws_dir=${ft_deploy_ws_dir}" >> $GITHUB_OUTPUT
+
+          # Directory within the deploy repo where deployment manifests are stored
+          if [[ -n "${{ needs.get-mci-variables.outputs.ft-deploy-repo-path }}" ]]; then
+            echo "ft_deploy_dir=${ft_deploy_ws_dir}/${{ needs.get-mci-variables.outputs.ft-deploy-repo-path }}" >> $GITHUB_OUTPUT
+          else
+            echo "ft_deploy_dir=${ft_deploy_ws_dir}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show FT variables
+        shell: bash
+        id: show-ft-variables
+        run: |
+          echo "repository: ${{ steps.ft-variables.outputs.ft_deploy_repo }}"
+          echo "ref: ${{ steps.ft-variables.outputs.ft_deploy_repo_ref }}"
+          echo "deploy_dir: ${{ steps.ft-variables.outputs.ft_deploy_dir }}"
+
+      - name: Clone deploy repository
+        uses: actions/checkout@v3.3.0
+        if: |
+          steps.ft-variables.outputs.ft_deploy_repo != '' &&
+          steps.ft-variables.outputs.ft_deploy_repo_ref != ''
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: ${{ steps.ft-variables.outputs.ft_deploy_repo }}
+          ref: ${{ steps.ft-variables.outputs.ft_deploy_repo_ref }}
+          path: ${{ steps.ft-variables.outputs.ft_deploy_ws_dir }}
+
+      - name: Show workspace hierarchy
+        shell: bash
+        id: show-repo
+        if: |
+          steps.ft-variables.outputs.ft_deploy_repo != '' &&
+          steps.ft-variables.outputs.ft_deploy_repo_ref != ''
+        run: |
+          ls -lR
+
+      - name: Push k8s artifacts to core
+        uses: glcp/mci-actions-coreupdate@v1.0
+        with:
+          appname: ${{ inputs.appname }}
+          appid: ${{ inputs.appid }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+          deploy_dir: ${{ steps.ft-variables.outputs.ft_deploy_dir }}
+
+          image_registry: ${{ inputs.image_registry }}
+          channel: ${{ inputs.channel }}
+          UPDATECTL_USER: ${{ secrets.updatectl_user }}
+          UPDATECTL_SERVER: ${{ secrets.updatectl_server }}
+          UPDATECTL_KEY: ${{ secrets.updatectl_key }}
+          COREROLLER_USER: ${{ secrets.coreroller_user }}
+          COREROLLER_SERVER: ${{ secrets.coreroller_server }}
+          COREROLLER_KEY: ${{ secrets.coreroller_key }}
+
+  Deploy_and_Test:
+    name: Deploy and test the application
+    needs: [coreupdate_job, create-tag]
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MCI_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Clone managed-ci utils
+        uses: actions/checkout@v3.3.0
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: glcp/managed-ci-workflow
+          # FIXME - update this for each MCI rc or release
+          ref: main
+          path: managed-ci
+
+      - name: Set variables
+        shell: bash
+        run: |
+          echo "Creating s3path"
+          DATE_WITH_TIME=`date +%Y%m%d-%H%M%S`
+          env
+          echo "s3path=${DATE_WITH_TIME}-${GITHUB_RUN_NUMBER}"
+          echo "s3path=${DATE_WITH_TIME}-${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
+          echo "IMAGE_S3_BUCKET=ccs-automation-logs"
+          echo "IMAGE_S3_BUCKET=ccs-automation-logs" >> $GITHUB_ENV
+
+          echo "IMAGE_S3_BUCKET_PUB_URL=https://rover.glcp.hpedev.net"
+          echo "IMAGE_S3_BUCKET_PUB_URL=https://rover.glcp.hpedev.net" >> $GITHUB_ENV
+
+          echo "REPO_SHORT_NAME=${GITHUB_REPOSITORY#*$GITHUB_REPOSITORY_OWNER/}"
+          echo "REPO_SHORT_NAME=${GITHUB_REPOSITORY#*$GITHUB_REPOSITORY_OWNER/}" >> $GITHUB_ENV
+
+          echo "Setting up the Spinnaker key"
+          echo "$QA_PEM" > qa.pem
+
+          echo "Creating s3log directory on github runner"
+          mkdir ./s3log
+        env:
+          QA_PEM: ${{secrets.qa_pem}}
+
+      - name: Application Deployment
+        id: application_deployment
+        shell: bash
+        run: |
+          echo "Application deployment on Integration cluster"
+          KEY=qa.pem
+          ENV="qa"
+          PAYLOAD="{\"type\":\"manual\",\"dryRun\":false,\"user\":\"github\",\"parameters\":{\"AppId\":\"${{ inputs.appid }}\",\"Version\":\"${{ needs.create-tag.outputs.tag }}\",\"DeploymentType\":\"Application\",\"ClusterToDeploy\":\"${{ env.CCS_Cluster }}\",\"AppNamespaceSuffix\":\"system\",\"S3Path\":\"${{ env.s3path }}/app-deployment\",\"ClusterPrefix\":\"${cluster_prefix}\",\"ListOfRegions\":\"[\\\"us-west-2\\\"]\"}}"
+          SPINNAKER_URL=${{ env.spinnaker_url }}
+          [ -z "$SPINNAKER_URL" ] && { SPINNAKER_URL='skip'; }
+          OUTPUT=`python ./managed-ci/utils/spinnaker-pipeline-new.py -e ${ENV} -k ${KEY} -u ${{ env.Spinnaker_job_url }} -U ${SPINNAKER_URL} -p ${PAYLOAD}`
+          echo "output from spinnaker.py file is ${OUTPUT}"
+          if [ "$OUTPUT" = "ERROR" ]; then
+            echo "✘ Application Deployment Failed!"
+            echo "rollback_deployment=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✔︎ Application Deployment Successful!"
+            echo "rollback_deployment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: FT Automation [External API -- Regression]
+        id: ft_external
+        shell: bash
+        run: |
+          echo "Application FT Automation on Integration cluster for External Testcases"
+          ENV="qa"
+          KEY=qa.pem
+          PAYLOAD="{\"type\":\"manual\",\"dryRun\":false,\"user\":\"github\",\"parameters\":{\"AppId\":\"${{ inputs.appid }}\",\"Version\":\"${{ needs.create-tag.outputs.tag }}\",\"DeploymentType\":\"Test\",\"ClusterToDeploy\":\"${{ env.Test_Cluster }}\",\"AppNamespaceSuffix\":\"system\",\"S3Path\":\"${{ env.s3path }}/automation/Application-test\",\"TestNamespaceSuffix\":\"inttest\",\"TestType\":\"Regression\",\"ClusterUnderTest\":\"${{ env.CCS_Cluster }}\",\"ClusterPrefix\":\"${cluster_prefix}\",\"ListOfRegions\":\"[\\\"us-west-2\\\"]\"}}"
+          SPINNAKER_URL=${{ env.spinnaker_url }}
+          [ -z "$SPINNAKER_URL" ] && { SPINNAKER_URL='skip'; }
+          OUTPUT=`python ./managed-ci/utils/spinnaker-pipeline-new.py -e ${ENV} -k ${KEY} -u ${{ env.Spinnaker_job_url }} -U ${SPINNAKER_URL} -p ${PAYLOAD}`
+          echo "output from spinnaker.py file is ${OUTPUT}"
+          if [ "$OUTPUT" = "ERROR" ]; then
+            echo "✘ FT Deployment Failed!"
+            echo "rollback_deployment=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✔︎ FT Deployment Successful!"
+            echo "rollback_deployment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: FT Automation [Internal API -- Internal]
+        id: ft_internal
+        shell: bash
+        run: |
+          echo "Application FT Automation on Integration cluster for Internal Testcases"
+          ENV="qa"
+          KEY=qa.pem
+          PAYLOAD="{\"type\":\"manual\",\"dryRun\":false,\"user\":\"github\",\"parameters\":{\"AppId\":\"${{ inputs.appid }}\",\"Version\":\"${{ needs.create-tag.outputs.tag }}\",\"DeploymentType\":\"Test\",\"ClusterToDeploy\":\"${{ env.CCS_Cluster }}\",\"AppNamespaceSuffix\":\"system\",\"S3Path\":\"${{ env.s3path }}/automation/Application-test\",\"TestNamespaceSuffix\":\"inttest\",\"TestType\":\"Internal\",\"ClusterUnderTest\":\"${{ env.CCS_Cluster }}\",\"ClusterPrefix\":\"${cluster_prefix}\",\"ListOfRegions\":\"[\\\"us-west-2\\\"]\"}}"
+          SPINNAKER_URL=${{ env.spinnaker_url }}
+          [ -z "$SPINNAKER_URL" ] && { SPINNAKER_URL='skip'; }
+          OUTPUT=`python ./managed-ci/utils/spinnaker-pipeline-new.py -e ${ENV} -k ${KEY} -u ${{ env.Spinnaker_job_url }} -U ${SPINNAKER_URL} -p ${PAYLOAD}`
+          echo "output from spinnaker.py file is ${OUTPUT}"
+          if [ "$OUTPUT" = "ERROR" ]; then
+            echo "✘ FT Deployment Failed!"
+            echo "rollback_deployment=true" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✔︎ FT Deployment Successful!"
+            echo "rollback_deployment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download and artifact from s3 path
+        if: always()
+        uses: glcp/aws-s3-github-action@v1.0.0
+        with:
+          command: cp
+          source: s3://ccs-automation-logs/${{ env.s3path }}/
+          destination: ./s3log/
+          aws_access_key_id: ${{ secrets.aws_access_key_id }}
+          aws_secret_access_key: ${{ secrets.aws_secret_access_key }}
+          aws_region: us-west-2
+          flags: --recursive
+
+      - name: Upload deployment and test logs as an artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: s3log
+          path: s3log/
+
+      - name: Get Allure history
+        uses: actions/checkout@v3
+        if: always()
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Allure report action from marketplace
+        uses: glcp/allure-report-action@master
+        if: always()
+        with:
+          allure_results: ./s3log/automation/Application-test/allurejson
+          allure_history: allure-history
+          subfolder: ${{ github.head_ref || github.event.pull_request.head.ref }}
+
+      - name: Deploy report to Github pages
+        if: always()
+        uses: glcp/actions-gh-pages@v2
+        env:
+          PERSONAL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_BRANCH: gh-pages
+          PUBLISH_DIR: allure-history
+
+      - name: Provide Allure report GitHub pages URL
+        id: provide_allure_report_url
+        if: always()
+        shell: bash
+        run: |
+          allure_report_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_SHORT_NAME}/${{ github.head_ref || github.event.pull_request.head.ref }}/${GITHUB_RUN_NUMBER}/"
+          echo "allure_report_url=$allure_report_url"
+          echo "allure_report_url=$allure_report_url" >> $GITHUB_OUTPUT
+
+      - name: Check Allure report
+        id: check_allure_failures
+        if: always()
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          ls -lah ./allure-report/
+
+          categories=$(cat ./allure-report/data/categories.json)
+          echo "CATEGORIES: $categories"
+
+          failures_exist=$(echo "${categories}" | jq -r "[.children[] | select(.name == \"Product defects\" or .name == \"Test defects\")] | length > 0")
+
+          if [ "$failures_exist" = "true" ]; then
+              echo "✘ Testcases Failed!"
+              echo "rollback_deployment=true" >> $GITHUB_OUTPUT
+              exit 1
+          else
+              echo "✔︎ Testcases Passed!"
+              echo "rollback_deployment=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Serve Allure report locally to take a screenshot
+        if: always()
+        uses: glcp/http-server-action@v1
+        with:
+          directory: ${{ github.workspace }}/allure-report
+          port: 8080
+          no-cache: false
+          content-types: |
+            {
+              "appcache": "text/cache-manifest",
+              "css": "text/css",
+              "gif": "image/gif",
+              "html": "text/html",
+              "ico": "image/x-icon",
+              "jpeg": "image/jpeg",
+              "jpg": "image/jpeg",
+              "js": "text/javascript",
+              "json": "application/json",
+              "png": "image/png",
+              "txt": "text/plain",
+              "xml": "text/xml"
+            }
+
+      - name: Take screenshot of the Allure report
+        if: always()
+        uses: glcp/webpage-screenshot-action@v1
+        with:
+          url: http://localhost:8080/index.html
+          output: allure_screenshot.png
+          mode: element
+          xpath: "//*[@class='app__content']//*[contains(@class, 'widgets-grid__col')][1]"
+          # deploy_test uses:
+          # xpath: "//*[@class='app__content']"
+          scriptBefore: "document.getElementsByClassName(\"side-nav__collapse\")[0].click(); setTimeout(()=>{console.info(\"Yey!\");}, 2000);"
+
+      - name: Upload screenshot as an artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: allure-report-screenshot
+          path: allure_screenshot.png
+
+      - name: Upload a screenshot to S3
+        if: always()
+        continue-on-error: true
+        uses: glcp/s3-cp-action@v2
+        id: upload_to_s3
+        with:
+          source: ./allure_screenshot.png
+          dest: s3://${{ env.IMAGE_S3_BUCKET }}/reports/ft-on-pr/${{ env.REPO_SHORT_NAME }}/allure-screenshot-${{ env.s3path }}.png
+          aws_access_key_id: ${{ secrets.aws_access_key_id }}
+          aws_secret_access_key: ${{ secrets.aws_secret_access_key }}
+          aws_region: us-west-2
+
+      - name: Add Allure report link to the PR
+        if: always()
+        uses: glcp/pr-update-action@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          base-branch-regex: '.*'
+          body-template: |
+            - **[⏱ FT COMPLETE #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
+            - **[📊 Feature Tests Allure Report #${{ github.run_number }}](${{ steps.provide_allure_report_url.outputs.allure_report_url }})**
+            ![Feature Tests Allure Report #${{ github.run_number }}](${{ env.IMAGE_S3_BUCKET_PUB_URL }}/reports/ft-on-pr/${{ env.REPO_SHORT_NAME }}/allure-screenshot-${{ env.s3path }}.png "Feature Tests Allure Report #${{ github.run_number }}")
+          body-update-action: 'suffix'
+
+      - name: Rollback application deployment with stable version
+        if: ${{ always() && ( steps.application_deployment.outputs.rollback_deployment == 'true' || steps.ft_external.outputs.rollback_deployment == 'true' || steps.check_allure_failures.outputs.rollback_deployment == 'true' ) }}
+        shell: bash
+        run: |
+          echo "Rollback Application deployment with Stable JC Version on Integration cluster"
+          KEY=qa.pem
+          ENV="qa"
+          PAYLOAD="{\"type\":\"manual\",\"dryRun\":false,\"user\":\"github\",\"parameters\":{\"AppId\":\"${{ inputs.appid }}\",\"Version\":\"C:Jenkins-Continuous\",\"DeploymentType\":\"Application\",\"ClusterToDeploy\":\"${{ env.CCS_Cluster }}\",\"AppNamespaceSuffix\":\"system\",\"S3Path\":\"${{ env.s3path }}/rollback\",\"ClusterPrefix\":\"${cluster_prefix}\",\"ListOfRegions\":\"[\\\"us-west-2\\\"]\"}}"
+          SPINNAKER_URL=${{ env.spinnaker_url }}
+          [ -z "$SPINNAKER_URL" ] && { SPINNAKER_URL='skip'; }
+          OUTPUT=`python ./managed-ci/utils/spinnaker-pipeline-new.py -e ${ENV} -k ${KEY} -u ${{ env.Spinnaker_job_url }} -U ${SPINNAKER_URL} -p ${PAYLOAD}`
+          echo "output from spinnaker.py file is ${OUTPUT}"
+          if [ "$OUTPUT" = "ERROR" ]; then
+            echo "✘ Application Rollback Failed!"
+            exit 1
+          else
+            echo "✔︎ Application Rollback Successful!"
+          fi
+
+    outputs:
+      allure_report_url: ${{ steps.provide_allure_report_url.outputs.allure_report_url }}

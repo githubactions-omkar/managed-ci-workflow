@@ -1,0 +1,22 @@
+startTime: 2023-07-17-16-55
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 4
+  deployedWorkflowsByRepository:
+    managed-ci-workflow-test-maven:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-maven/managed-ci-workflow/workflows/managed-ci-merge.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-maven/managed-ci-workflow/workflows/managed-ci-pr.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-maven/managed-ci-workflow/workflows/managed-ci-manual-build.yaml
+    managed-ci-workflow-test-python:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-python/managed-ci-workflow/workflows/managed-ci-merge.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-python/managed-ci-workflow/workflows/managed-ci-pr.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-python/managed-ci-workflow/workflows/managed-ci-manual-build.yaml
+    managed-ci-workflow-test-golang:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-golang/managed-ci-workflow/workflows/managed-ci-merge.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-golang/managed-ci-workflow/workflows/managed-ci-pr.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-golang/managed-ci-workflow/workflows/managed-ci-manual-build.yaml
+    managed-ci-workflow-test-scala:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-scala/managed-ci-workflow/workflows/managed-ci-merge.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-scala/managed-ci-workflow/workflows/managed-ci-pr.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-scala/managed-ci-workflow/workflows/managed-ci-manual-build.yaml

@@ -1,0 +1,803 @@
+name: Build and FT for PR
+
+on:
+  workflow_call:
+
+jobs:
+  getbuildsystem:
+   runs-on: ubuntu-latest
+   outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+   steps:
+        - uses: glcp/mci-actions-get-build-system@v1
+          id: get_build_system
+          with:
+            gh_token: ${{ secrets.GITHUB_TOKEN }}
+            vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }} 
+            git_ref: ${{ github.ref }}  
+  
+  show-event-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show event name and event type
+        run: |
+          echo "github.event_name=${{ github.event_name }}"
+          echo "github.event.action=${{ github.event.action }}"
+
+  get-mci-variables:
+    if: needs.getbuildsystem.outputs.output == 'golang'  || 
+        needs.getbuildsystem.outputs.output == 'javascript-image' ||
+        needs.getbuildsystem.outputs.output == 'python' ||
+        needs.getbuildsystem.outputs.output == 'onprem'
+    name: Get variables from mci-variables
+    needs: getbuildsystem
+    runs-on: ubuntu-latest
+    outputs:
+      app-id: ${{ env.APP_ID }}
+      app-name: ${{ env.APP_NAME }}
+      target: ${{ env.TARGET }}
+      build-image: ${{ env.BUILD_CONTAINER_IMAGE }}
+      ft-test-repo: ${{ env.FT_REPOSITORY }}
+      ft-test-repo-dockerfile: ${{ env.FT_DOCKERFILE_PATH }}
+      vcenter_server: ${{ env.VCENTER_SERVER }}
+      products: ${{ steps.mci-restore.outputs.products }}
+      JFROG_USERNAME: ${{ steps.jfrog-creds.outputs.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ steps.jfrog-creds.outputs.JFROG_PASSWORD }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+          
+      - name: Set JFrog Credentials
+        id: jfrog-creds
+        uses: glcp/mci-action-jfrog-credentials@v1.0.0
+        with:
+          JFROG_URL: $JFROG_URL
+          secrets: ${{ toJson(secrets) }}
+
+  get-docker-image-name:
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["python", "golang", "maven"]'), needs.getbuildsystem.outputs.output)
+    needs: getbuildsystem
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Get Docker image name from MCI variables
+        id: this-docker-image-name
+        run: |
+          echo "BUILD_CONTAINER_IMAGE=$BUILD_CONTAINER_IMAGE" >> $GITHUB_OUTPUT
+    outputs:
+      docker-image-name: ${{ steps.this-docker-image-name.outputs.BUILD_CONTAINER_IMAGE }}
+
+  build-golang:
+    if: needs.getbuildsystem.outputs.output == 'golang'
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem, get-mci-variables]
+    strategy:
+      matrix: ${{fromJson(needs.get-mci-variables.outputs.products)}}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Determine test repo (if any)
+        shell: bash
+        id: docker-repo-variables
+        run: |
+          if [[ "${{ matrix.BUILD_TYPE }}" == "automation" ]]; then
+            # TESTS - product-specific test repo values with fallback to global values
+            ft_test_repo_and_ref=${{ matrix.FT_REPOSITORY }}
+            ft_test_repo_and_ref=${ft_test_repo_and_ref:-${{ needs.get-mci-variables.outputs.ft-test-repo }}}
+            ft_test_repo_and_ref=${ft_test_repo_and_ref:-${GITHUB_REPOSITORY}}
+            
+            ft_test_repo=$(echo $ft_test_repo_and_ref | awk -F@ '{print $1}')
+            echo "ft_test_repo=$ft_test_repo" >> $GITHUB_OUTPUT
+
+            ft_test_repo_ref=$(echo $ft_test_repo_and_ref | awk -F@ '{print $2}')
+            ft_test_repo_ref=${ft_test_repo_ref:-${{ github.head_ref }}}
+            echo "ft_test_repo_ref=$ft_test_repo_ref" >> $GITHUB_OUTPUT
+
+            dockerfile_path=${{ matrix.DOCKERFILE_PATH }}
+            dockerfile_path=$(echo ${dockerfile_path:-${{ needs.get-mci-variables.outputs.ft-test-repo-dockerfile }}} | sed 's,^./,,') # either of these two sources could have leading ./
+            dockerfile_path=${dockerfile_path:-'tests/feature_test/docker/Dockerfile_FT'}
+
+            # FIXME?  At some point we may want to allow context to be overridden
+            if [[ -n "$ft_test_repo" ]]; then
+              docker_context="tests"
+            else
+              docker_context="."
+            fi
+            echo "docker_context=$docker_context" >> $GITHUB_OUTPUT
+            echo "dockerfile_path=${docker_context}/${dockerfile_path}" >> $GITHUB_OUTPUT
+          else
+            echo "docker_context=." >> $GITHUB_OUTPUT
+            dockerfile_path=$(echo ${{ matrix.DOCKERFILE_PATH }} | sed 's,^./,,')
+            dockerfile_path=${dockerfile_path:-'docker/Dockerfile'}
+            echo "dockerfile_path=${dockerfile_path}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show Variables
+        shell: bash
+        id: show-test-repo-variables
+        run: |
+          if [[ "${{ matrix.BUILD_TYPE }}" == "automation" ]]; then
+            echo "Test repository: ${{ steps.docker-repo-variables.outputs.ft_test_repo }}"
+            echo "Test repository ref: ${{ steps.docker-repo-variables.outputs.ft_test_repo_ref }}"
+          fi
+          echo "dockerfile_path: ${{ steps.docker-repo-variables.outputs.dockerfile_path }}"
+          echo "context: ${{ steps.docker-repo-variables.outputs.docker_context }}"
+
+      - name: Clone Test Repository
+        uses: actions/checkout@v3.3.0
+        if: |
+          matrix.BUILD_TYPE == 'automation' &&
+          steps.docker-repo-variables.outputs.ft_test_repo != '' &&
+          steps.docker-repo-variables.outputs.ft_test_repo_ref != ''
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: ${{ steps.docker-repo-variables.outputs.ft_test_repo }}
+          ref: ${{ steps.docker-repo-variables.outputs.ft_test_repo_ref }}
+          path: tests
+
+
+      - name: Docker Push
+        uses: glcp/mci-actions-docker-build-push@v1.3
+        with:
+          docker_load: true
+          docker_push: false 
+          dockerfile_path: ${{ steps.docker-repo-variables.outputs.dockerfile_path }}
+          context: ${{ steps.docker-repo-variables.outputs.docker_context }}
+          image_registry: ${{ matrix.IMAGE_REGISTRY }}
+          tag: ci-image${{ matrix.TAG_EXTENSION }}
+          target: ${{ matrix.TARGET }}
+          appname: ${{ matrix.APP_NAME }}
+          appid: ${{ matrix.APP_ID }}
+          registry: quay.io
+          build_type: ${{ matrix.BUILD_TYPE }}
+          base_image: ${{ matrix.base_image }}
+          secrets: ${{ toJSON(secrets) }}
+
+      
+      - name: Scan for CVE
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: ${{ matrix.IMAGE_REGISTRY }}:ci-image${{ matrix.TAG_EXTENSION }}
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+  build-maven-app:
+    if: needs.getbuildsystem.outputs.output == 'maven'
+    needs: [getbuildsystem, get-docker-image-name]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag-version.outputs.tag }}
+    env:
+      quay_username: ${{ secrets.MCI_QUAY_USER }}
+      quay_password: ${{ secrets.MCI_QUAY_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      JFROG_USERNAME: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      JFROG_PASSWORD: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+      COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+      COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+      COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+      MAVEN_HOME: /usr/share/maven
+      MAVEN_CONFIG: /root/.m2
+      MOCK_APP_NAME: mock-ccs-cluster
+      DEV_ENV_DIR: subscription-management-dev-env
+      DC_PROJECT_NAME: subscription-management-ci
+      MARKER_FEATURE_NOT_READY: FeatureNotReady
+      MARKER_REGRESSION: Regression
+      MARKER_INTERNAL: Internal
+    container:
+      image: ${{ needs.get-docker-image-name.outputs.docker-image-name }}
+      credentials:
+        username: ${{ secrets.MCI_QUAY_USER }}
+        password: ${{ secrets.MCI_QUAY_PASSWORD }}
+    steps:
+      - name: Checkout Code for App Build
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Install dependencies
+        if: ${{ needs.get-docker-image-name.outputs.docker-image-name }} != ''
+        shell: bash
+        run: |
+          chmod +x ./install-dependencies.sh
+          ./install-dependencies.sh
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: Assemble Git Tag
+        id: tag-version
+        uses: glcp/mci-actions-version-tag/java@v1
+        with:
+          push_tag: false
+          
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Run build_ut.sh
+        # This creates files and dirs used in the "docker/Dockerfile"
+        shell: bash
+        run: |
+          chmod +x ./build_ut.sh
+          ./build_ut.sh --ut-skip
+
+      - name: Build and export to Docker
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          docker_load: true
+          docker_push: false
+          tag: ${{ steps.tag-version.outputs.tag }}
+          target: ci-stage
+          image_registry: ${{ env.IMAGE_REGISTRY }}
+          registry: quay.io
+          secrets: ${{ toJSON(secrets) }}
+
+      - name: Scan for CVE
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: ${{ env.IMAGE_REGISTRY }}:${{ steps.tag-version.outputs.tag }}
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+      - name: Docker App Build
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          appname: ${{ env.APP_NAME }}
+          tag: ${{ steps.tag-version.outputs.tag }}
+          registry: quay.io
+          image_registry: ${{ env.IMAGE_REGISTRY }}
+          target: ci-stage
+          secrets: ${{ toJSON(secrets) }}
+
+
+  build-javascript:
+    if: needs.getbuildsystem.outputs.output == 'javascript'
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem ]
+    env:
+       gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+       GLCP_ARTIFACTORY_TOKEN: ${{ secrets.GLCP_ARTIFACTORY_TOKEN }}
+       GLCP_NPM_READ: ${{ secrets.GLCP_NPM_READ }}
+    steps:
+      - name: Checkout Code for App Build
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Set defaults
+        run: |
+          if [[ -z "${{ env.JS_BUILD_SCRIPT }}" ]]; then 
+            echo "JS_BUILD_SCRIPT=build" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_BUILD_PATH }}" ]]; then 
+            echo "JS_BUILD_PATH=dist" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_WORKING_DIR }}" ]]; then 
+            echo "JS_WORKING_DIR=./" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PACKAGE_MANAGER }}" ]]; then 
+            echo "JS_PACKAGE_MANAGER=pnpm" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_CACHE_VERSION }}" ]]; then 
+            echo "JS_CACHE_VERSION=v1" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_NODE_VERSION }}" ]]; then 
+            echo "JS_NODE_VERSION=16" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PNPM_VERSION }}" ]]; then 
+            echo "JS_PNPM_VERSION=7" >> $GITHUB_ENV
+          fi
+          if [[ -z "${{ env.JS_PNPM_RECURSIVE }}" ]]; then 
+            echo "JS_PNPM_RECURSIVE=true" >> $GITHUB_ENV
+          fi
+
+        shell: bash
+
+      - uses: glcp/mfe-workflows/.github/actions/build@v1
+        with:
+          build-script: ${{ env.JS_BUILD_SCRIPT }}
+          build-path: ${{ env.JS_BUILD_PATH }}
+          working-directory: ${{ env.JS_WORKING_DIR }}
+          package-manager: ${{ env.JS_PACKAGE_MANAGER }}
+          cache-version: ${{ env.JS_CACHE_VERSION }}
+          public-url: /${{ env.APP_NAME }}/
+          node-version: ${{ env.JS_NODE_VERSION}}
+          pnpm-version: ${{ env.JS_PNPM_VERSION }}
+          pnpm-recursive: ${{ env.JS_PNPM_RECURSIVE }}
+
+  build-javascript-image:
+    if: needs.getbuildsystem.outputs.output == 'javascript-image'
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem, get-mci-variables]
+    strategy:
+      matrix: ${{fromJson(needs.get-mci-variables.outputs.products)}}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+            if test -f ./install-dependencies.sh; then
+                chmod +x ./install-dependencies.sh
+                ./install-dependencies.sh
+            fi
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: Assemble Git Tag
+        id: tag-version
+        uses: glcp/mci-actions-version-tag/java@v1
+        with:
+          push_tag: false
+
+      - name: Build and export to Docker
+        if: matrix.DOCKERFILE_PATH != ''
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          docker_load: true
+          docker_push: false
+          tag: ${{ steps.tag-version.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+          target: ${{ matrix.TARGET }}
+          dockerfile_path: ${{ matrix.DOCKERFILE_PATH }}
+          image_registry: ${{ matrix.IMAGE_REGISTRY }}
+          registry: quay.io
+          secrets: ${{ toJSON(secrets) }}
+
+      - name: Scan for CVE
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: ${{ matrix.IMAGE_REGISTRY }}:${{ steps.tag-version.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+  build-maven-coreupdate:
+    if: needs.getbuildsystem.outputs.output == 'maven'
+    runs-on: ccs-runner
+    needs: [getbuildsystem, build-maven-app]
+    env:
+      quay_username: ${{ secrets.MCI_QUAY_USER }}
+      quay_password: ${{ secrets.MCI_QUAY_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      JFROG_USERNAME: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      JFROG_PASSWORD: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+      COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+      COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+      COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+      MAVEN_HOME: /usr/share/maven
+      MAVEN_CONFIG: /root/.m2
+      MOCK_APP_NAME: mock-ccs-cluster
+      DEV_ENV_DIR: subscription-management-dev-env
+      DC_PROJECT_NAME: subscription-management-ci
+      MARKER_FEATURE_NOT_READY: FeatureNotReady
+      MARKER_REGRESSION: Regression
+      MARKER_INTERNAL: Internal
+    steps:
+      - name: Checkout Code for Coreupdate Push
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Channel
+        id: channel
+        uses: glcp/mci-actions-coreupdate-channel@v1
+
+      - name: Coreupdate Push
+        if: steps.channel.outputs.channel != ''
+        uses: glcp/mci-actions-coreupdate@v1.0
+        env:
+          jfrog_username: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+          jfrog_password: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+        with:
+          appname: ${{ env.APP_NAME }}
+          appid: ${{ env.APP_ID }}
+          tag: ${{ needs.build-maven-app.outputs.tag }}
+          image_registry: "quay.io/ccsportal/${{ env.APP_NAME }}"
+          channel: ${{ steps.channel.outputs.channel }}
+          UPDATECTL_USER: ${{ secrets.CCS_UPDATECTL_USER }}
+          UPDATECTL_SERVER: ${{ secrets.CCS_UPDATECTL_SERVER }}
+          UPDATECTL_KEY: ${{ secrets.CCS_UPDATECTL_KEY }}
+          COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+          COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+          COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+
+  build-python:
+    if: needs.getbuildsystem.outputs.output == 'python' && needs.get-mci-variables.outputs.products != ''
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem, get-mci-variables]
+    strategy:
+      matrix: ${{fromJson(needs.get-mci-variables.outputs.products)}}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Build and export to Docker
+        if: matrix.DOCKERFILE_PATH != ''
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          docker_load: true
+          docker_push: false
+          tag: ci-image${{ matrix.TAG_EXTENSION }}
+          target: ${{ matrix.TARGET }}
+          base_image: ${{ matrix.BASE_IMAGE }}
+          dockerfile_path: ${{ matrix.DOCKERFILE_PATH }}
+          image_registry: ${{ matrix.IMAGE_REGISTRY }}
+          registry: quay.io
+          secrets: ${{ toJSON(secrets) }}
+
+      - name: Scan for CVE
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: ${{ matrix.IMAGE_REGISTRY }}:ci-image${{ matrix.TAG_EXTENSION }}
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+  build-python-default:
+    if: needs.getbuildsystem.outputs.output == 'python' && needs.get-mci-variables.outputs.products == ''
+    runs-on: ubuntu-latest
+    needs: [ getbuildsystem, get-mci-variables ]
+    env:
+      quay_username: ${{ secrets.MCI_QUAY_USER }}
+      quay_password: ${{ secrets.MCI_QUAY_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+    steps:
+      - name: Checkout Code for App Build
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v1
+        with:
+          use-artifact: false
+
+      - name: Show github event_name and env vars
+        run: |
+          echo "github.event_name ${{ github.event_name }}"
+          echo ---------
+          export -p | sed 's/declare -x //'
+          echo ---------
+        shell: bash
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Build and export to Docker
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          docker_load: true
+          docker_push: false
+          base_image: ${{ env.BASE_IMAGE }}
+          tag: ci-image
+          target: ci-stage
+          image_registry: quay.io/ccsportal/${{ env.APP_NAME }}
+          registry: quay.io
+          secrets: ${{ toJSON(secrets) }}
+
+      - name: Scan for CVE
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: quay.io/ccsportal/${{ env.APP_NAME }}:ci-image
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+      - name: Build FIPS image and export to Docker
+        if: env.BASE_IMAGE_FIPS != ''
+        uses: glcp/mci-actions-docker-build-push-app@v3
+        with:
+          docker_load: true
+          docker_push: false
+          base_image: ${{ env.BASE_IMAGE_FIPS }}
+          tag: ci-image-fips
+          target: ci-stage
+          image_registry: quay.io/ccsportal/${{ env.APP_NAME }}
+          registry: quay.io
+          secrets: ${{ toJSON(secrets) }}
+
+      - name: Scan FIPS image for CVE
+        if: env.BASE_IMAGE_FIPS != ''
+        uses: glcp/jfrog-scan-cve@v1
+        with:
+          mode: image
+          item-to-scan: quay.io/ccsportal/${{ env.APP_NAME }}:ci-image-fips
+          jfrog-username: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          jfrog-password: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+  build-custom-apt:
+   if: needs.getbuildsystem.outputs.output == 'onprem'
+   needs: [getbuildsystem, get-mci-variables]
+   runs-on: [self-hosted, onprem-platform]
+   env:
+
+      CHECKOUT_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+      VCENTER_USERNAME: ${{ secrets.APPINSIGHT_VIUSER }}
+      VCENTER_PASSWORD: ${{ secrets.APPINSIGHT_VIPASSWORD }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      BUILD_TYPE: custom-apt
+
+   concurrency:
+    group: ova-build-{{ needs.get-mci-variables.outputs.vcenter_server }}
+    cancel-in-progress: false
+   steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Check if sources changed
+        uses: glcp/paths-filter@v2
+        id: sources
+        with:
+          filters: |
+            changed:
+              - 'custom-apt/**'
+              - 'clone/**'
+              - 'clean/**'
+              - 'scripts/**'
+      - name: Show jFrog Artifacts URL
+        run: |
+          echo "If this build is successful you should find the artifacts here:"
+          echo
+          # echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${{ github.run_number }}/"
+          echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${VERSION_NUMBER}/"
+          echo
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      # - name: Checkout code
+      #   uses: actions/checkout@v3
+
+      - name: Ensure the OVA Builder VM has been started (make start)
+        if: steps.sources.outputs.changed == 'true' ## && !contains(fromJSON('["golden"]'), env.WORKFLOW_TYPE) }} TODO: check with onprem team
+        shell: bash
+        run: |
+           echo "Ensure the OVA Builder VM has been started (make start)"
+           echo "======================================================="
+           make start
+           echo ""
+           echo "Clean the Work Directories of the OVA Builder (make clean)"
+           echo "=========================================================="
+           make clean
+           echo ""
+           echo "Clone onprem-ova to VM (make clone)"
+           echo "==================================="
+           make clone
+           echo ""
+           echo "Build custom APT binaries tarball and upload to jfrog"
+           echo "===================================================="
+           make custom-apt
+           
+  build-platform-scripts:
+   if: needs.getbuildsystem.outputs.output == 'onprem'
+   runs-on: [self-hosted, onprem-platform]
+   needs: [getbuildsystem, get-mci-variables]
+   env:
+      CHECKOUT_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+      VCENTER_USERNAME: ${{ secrets.APPINSIGHT_VIUSER }}
+      VCENTER_PASSWORD: ${{ secrets.APPINSIGHT_VIPASSWORD }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      BUILD_TYPE: platform-scripts
+   concurrency:
+     group: ova-build-{{ needs.get-mci-variables.outputs.vcenter_server }}
+     cancel-in-progress: false
+   steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Check if sources changed
+        uses: glcp/paths-filter@v2
+        id: sources
+        with:
+          filters: |
+            changed:
+              - 'custom-apt/**'
+              - 'clone/**'
+              - 'clean/**'
+              - 'scripts/**'
+      - name: Show jFrog Artifacts URL
+        run: |
+          echo "If this build is successful you should find the artifacts here:"
+          echo
+          # echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${{ github.run_number }}/"
+          echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${VERSION_NUMBER}/"
+          echo
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      - name: Ensure the OVA Builder VM has been started (make start)
+        if: steps.sources.outputs.changed == 'true'  ## && !contains(fromJSON('["golden"]'), env.WORKFLOW_TYPE) }} TODO: check with onprem team
+        shell: bash
+        run: |
+           echo "Ensure the OVA Builder VM has been started (make start)"
+           echo "======================================================="
+           make start
+           echo ""
+           echo "Clean the Work Directories of the OVA Builder (make clean)"
+           echo "=========================================================="
+           make clean
+           echo ""
+           echo "Clone onprem-ova to VM (make clone)"
+           echo "==================================="
+           make clone
+           echo ""
+           echo "Build platform scripts tarball and upload to jfrog"
+           echo "=================================================="
+           make platform-scripts
+  build-ova:
+    if: needs.getbuildsystem.outputs.output == 'onprem'
+    runs-on: [self-hosted, onprem-platform, virtualbox, appliance, coreupdate]
+    needs: [getbuildsystem, build-custom-apt,  build-platform-scripts]
+    env:
+      BUILD_TYPE: onprem
+      PLATFORM_BUILD_TYPE: CI
+      SIGN_OVA: true
+      CS_API_TOKEN: ${{ secrets.CS_API_TOKEN }}
+      CS_ID: ${{ secrets.CS_ID }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1   
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Registry login
+        uses: glcp/mci-actions-registry-login@v1
+        with: 
+          secrets: ${{ toJson(secrets) }}
+
+
+      - name: Set ARTIFACTS_BUILD_DIR
+        run: |
+            # echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${{ github.run_number }}" >> $GITHUB_ENV
+            echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${VERSION_NUMBER}" >> $GITHUB_ENV
+      - name: Show artifacts destination
+        run: |
+            echo "If this build is successful, you should find the artifacts here:"
+            echo
+            echo " - ${ARTIFACTS_SERVER_USER}@${ARTIFACTS_SERVER}:${ARTIFACTS_BUILD_DIR}/"
+            echo
+      - name: Set environment variables
+        run: |
+            echo "UBUNTU_ISO_PATH=${HOME}/iso-images/ubuntu-20.04.1-legacy-server-amd64.iso" >> $GITHUB_ENV
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      - name: OVA build
+        uses: glcp/mci-actions-ova-build@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+          registry: quay.io
+
+    outputs:
+      artifacts_build_dir: ${ARTIFACTS_BUILD_DIR}

@@ -1,0 +1,2 @@
+# pre-test
+The pre-test job depends on the lint job. The pre-test workflow need/will be in the repository **.github/workflows** folder. This is just a boilerplate workflow, which is the application team can use to execute project specific jobs before unit-test that cann't be incorporated in MANAGED CI. The reference workflow for pre-test is [mci-pre-test.yaml](https://github.com/glcp/managed-ci-workflow/tree/v1.4.0/templates/mci-pre-test.yaml)

@@ -1,0 +1,21 @@
+primary_workflows:
+  - managed-ci-merge.yaml
+  - managed-ci-pr.yaml
+  - managed-ci-pr-check.yaml
+  - managed-ci-manual-build.yaml
+  - managed-ci-pr-ft.yaml
+  - managed-ci-pr-ft-check.yaml
+  - managed-ci-pr-build.yaml
+optional_workflows:
+  - managed-ci-hotfix-branch-create.yaml
+  - managed-ci-schedule.yaml
+template_workflows:
+  - mci-pre-check.yaml
+  - mci-post-check.yaml
+  - mci-pre-lint.yaml
+  - mci-pre-test.yaml
+  - mci-custom-final.yaml
+custom_branch_workflows:
+  - managed-ci-merge.yaml
+cron_workflows:
+  - managed-ci-schedule.yaml

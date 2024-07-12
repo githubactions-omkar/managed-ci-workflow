@@ -1,0 +1,9 @@
+startTime: 2023-03-15-09-16
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 2
+  deployedWorkflowsByRepository:
+    rmcnamara-managed-ci-workflow-test:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/workflows/glcp-managed-ci-workflow.yaml
+    rmcnamara-managed-ci-workflow-test2: []

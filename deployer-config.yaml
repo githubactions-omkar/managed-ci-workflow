@@ -1,0 +1,26 @@
+
+default_tag_status_context:
+  tags/v1.5:
+    - 'mci-status-checks / status-check'
+  tags/v1.6:
+    - 'mci-status-checks / status-check'
+  tags/v1.7:
+    - 'mci-status-checks / status-check'
+  tags/v1.8:
+    - 'mci-status-checks / status-check'
+language:
+  # shell:
+  #   - 'mci-check / check-done'
+common-secrets:
+  - 'MCI_QUAY_PASSWORD'
+  - 'MCI_QUAY_USER'
+  # - 'AWS_ACCESS_KEY_ID'
+  # - 'AWS_SECRET_ACCESS_KEY'
+  # - 'QA_PEM'
+optional-secrets:
+  ft-secrets:
+    - 'QA_PEM'
+# required_status_check_contexts:
+  # - 'mci-check / secret-scanner / Secret_Scan'
+  # - 'mci-check / malware-scanner'
+lang_variable: 'GLCP_BUILD_SYSTEM'

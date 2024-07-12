@@ -1,0 +1,21 @@
+startTime: 2023-06-13-23-22
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 12
+  deployedWorkflowsByRepository:
+    test-app-provision: []
+    rmcnamara-firmware-registry: []
+    service-registry: []
+    service-provision: []
+    app-catalog: []
+    app-provision: []
+    geo: []
+    managed-ci-workflow-test-maven: []
+    managed-ci-workflow-test-python: []
+    managed-ci-workflow-test-golang: []
+    managed-ci-workflow-test-scala: []
+    hpedev-sample-go:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../hpedev-sample-go/managed-ci-workflow/templates/mci-pre-stage.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../hpedev-sample-go/managed-ci-workflow/templates/mci-pre-test.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../hpedev-sample-go/managed-ci-workflow/workflows/managed-ci-workflow.yaml

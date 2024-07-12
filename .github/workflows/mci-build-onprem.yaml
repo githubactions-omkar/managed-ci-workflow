@@ -1,0 +1,305 @@
+name: Managed CI Build onprem
+on:
+  workflow_call:
+
+jobs:
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      vcenter_server: ${{ env.VCENTER_SERVER }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v3
+        with:
+          source: checkout
+
+  create-tag:
+    name: onprem/create-tag
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Set env var VERSION_NUMBER
+      uses: glcp/mci-actions-version-number@v1
+
+    - name: Assemble Git Tag
+      id: tag_version
+      shell: bash
+      run: |
+        if [[ "${{ github.event_name }}" == "schedule" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          export tag="${{vars.semantic_version}}-${VERSION_NUMBER}-golden"
+          git tag $tag
+          git push --tags
+        else
+          export tag="${{vars.semantic_version}}-${VERSION_NUMBER}-dev"
+        fi
+        echo "Git Tag version: $tag"
+        echo "tag=$tag" >> $GITHUB_OUTPUT		
+
+  build-custom-apt:
+   runs-on: [self-hosted, onprem-platform]
+   needs: get-mci-variables
+   env:
+
+      CHECKOUT_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+      VCENTER_USERNAME: ${{ secrets.APPINSIGHT_VIUSER }}
+      VCENTER_PASSWORD: ${{ secrets.APPINSIGHT_VIPASSWORD }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      BUILD_TYPE: custom-apt
+
+   concurrency:
+    group: ova-build-{{ needs.get-mci-variables.outputs.vcenter_server }}
+    cancel-in-progress: false
+   steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Check if sources changed
+        uses: glcp/paths-filter@v2
+        id: sources
+        with:
+          filters: |
+            changed:
+              - 'custom-apt/**'
+              - 'clone/**'
+              - 'clean/**'
+              - 'scripts/**'
+      - name: Show jFrog Artifacts URL
+        run: |
+          echo "If this build is successful you should find the artifacts here:"
+          echo
+          # echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${{ github.run_number }}/"
+          echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${VERSION_NUMBER}/"
+          echo
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      # - name: Checkout code
+      #   uses: actions/checkout@v3
+
+      - name: Ensure the OVA Builder VM has been started (make start)
+        if: steps.sources.outputs.changed == 'true' ## && !contains(fromJSON('["golden"]'), env.WORKFLOW_TYPE) }} TODO: check with onprem team
+        shell: bash
+        run: |
+           echo "Ensure the OVA Builder VM has been started (make start)"
+           echo "======================================================="
+           make start
+           echo ""
+           echo "Clean the Work Directories of the OVA Builder (make clean)"
+           echo "=========================================================="
+           make clean
+           echo ""
+           echo "Clone onprem-ova to VM (make clone)"
+           echo "==================================="
+           make clone
+           echo ""
+           echo "Build custom APT binaries tarball and upload to jfrog"
+           echo "===================================================="
+           make custom-apt
+           
+  build-platform-scripts:
+   runs-on: [self-hosted, onprem-platform]
+   needs: get-mci-variables
+   env:
+      CHECKOUT_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+      VCENTER_USERNAME: ${{ secrets.APPINSIGHT_VIUSER }}
+      VCENTER_PASSWORD: ${{ secrets.APPINSIGHT_VIPASSWORD }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      BUILD_TYPE: platform-scripts
+   concurrency:
+     group: ova-build-{{ needs.get-mci-variables.outputs.vcenter_server }}
+     cancel-in-progress: false
+   steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Check if sources changed
+        uses: glcp/paths-filter@v2
+        id: sources
+        with:
+          filters: |
+            changed:
+              - 'custom-apt/**'
+              - 'clone/**'
+              - 'clean/**'
+              - 'scripts/**'
+      - name: Show jFrog Artifacts URL
+        run: |
+          echo "If this build is successful you should find the artifacts here:"
+          echo
+          # echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${{ github.run_number }}/"
+          echo "  - https://hpeartifacts.jfrog.io/ui/repos/tree/General/glcp_opg_files/glcp_op_binaries/${{ github.ref_name }}/${VERSION_NUMBER}/"
+          echo
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      - name: Ensure the OVA Builder VM has been started (make start)
+        if: steps.sources.outputs.changed == 'true'  ## && !contains(fromJSON('["golden"]'), env.WORKFLOW_TYPE) }} TODO: check with onprem team
+        shell: bash
+        run: |
+           echo "Ensure the OVA Builder VM has been started (make start)"
+           echo "======================================================="
+           make start
+           echo ""
+           echo "Clean the Work Directories of the OVA Builder (make clean)"
+           echo "=========================================================="
+           make clean
+           echo ""
+           echo "Clone onprem-ova to VM (make clone)"
+           echo "==================================="
+           make clone
+           echo ""
+           echo "Build platform scripts tarball and upload to jfrog"
+           echo "=================================================="
+           make platform-scripts
+  build-ova:
+    runs-on: [self-hosted, onprem-platform, virtualbox, appliance, coreupdate]
+    needs: [build-custom-apt,  build-platform-scripts]
+    env:
+      BUILD_TYPE: onprem
+      PLATFORM_BUILD_TYPE: CI
+      SIGN_OVA: true
+      CS_API_TOKEN: ${{ secrets.CS_API_TOKEN }}
+      CS_ID: ${{ secrets.CS_ID }}
+      HTTP_PROXY: ${{ vars.http_proxy }}
+      HTTPS_PROXY: ${{ vars.https_proxy }}
+      JFROG_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_API_KEY }}
+      JFROG_URL: ${{ secrets.JFROG_URL }}
+      JFROG_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_MASTER_USERNAME }}
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1   
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Registry login
+        uses: glcp/mci-actions-registry-login@v1
+        with: 
+          secrets: ${{ toJson(secrets) }}
+
+
+      - name: Set ARTIFACTS_BUILD_DIR
+        run: |
+            # echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${{ github.run_number }}" >> $GITHUB_ENV
+            echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${VERSION_NUMBER}" >> $GITHUB_ENV
+      - name: Show artifacts destination
+        run: |
+            echo "If this build is successful, you should find the artifacts here:"
+            echo
+            echo " - ${ARTIFACTS_SERVER_USER}@${ARTIFACTS_SERVER}:${ARTIFACTS_BUILD_DIR}/"
+            echo
+      - name: Set environment variables
+        run: |
+            echo "UBUNTU_ISO_PATH=${HOME}/iso-images/ubuntu-20.04.1-legacy-server-amd64.iso" >> $GITHUB_ENV
+      - name: Dump Environment Variables for Debugging
+        run: env
+
+      - name: OVA build
+        uses: glcp/mci-actions-ova-build@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+          registry: quay.io
+
+    outputs:
+      artifacts_build_dir: ${ARTIFACTS_BUILD_DIR}
+
+  publish-ova:
+    name: Publish OVA Golden Image
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: [onprem-platform, self-hosted]
+    needs: [build-ova, build-custom-apt, build-platform-scripts]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: overwrite WORKFLOW_TYPE
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+          echo "WORKFLOW_TYPE=merge" >> $GITHUB_ENV
+          else
+          echo "WORKFLOW_TYPE=ci" >> $GITHUB_ENV
+          fi
+      - name: Set variables
+        run: |
+            # echo "TARGET_DIR_PREFIX=~/golden-image" >> $GITHUB_ENV
+            # echo "TARGET_DIR=golden-image-staging-${{ github.run_number }}" >> $GITHUB_ENV
+            # echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${{ github.run_number }}" >> $GITHUB_ENV
+            echo "TARGET_DIR_PREFIX=~/golden-image" >> $GITHUB_ENV
+            echo "TARGET_DIR=golden-image-staging-${VERSION_NUMBER}" >> $GITHUB_ENV
+            echo "ARTIFACTS_BUILD_DIR=~/onprem-ova-builds/build-${{ env.WORKFLOW_TYPE }}-${VERSION_NUMBER}" >> $GITHUB_ENV
+      - run: |
+            ssh ${{ env.ARTIFACTS_SERVER_USER }}@${{ env.ARTIFACTS_SERVER }} \
+              "mkdir -p ${{ env.TARGET_DIR}} && \
+              cp ${ARTIFACTS_BUILD_DIR}/*.ova ${{ env.TARGET_DIR}}"

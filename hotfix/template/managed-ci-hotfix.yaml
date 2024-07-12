@@ -1,0 +1,32 @@
+name: Managed CI on Merge HOTFIX
+on:
+  push:
+    branches:
+      - hotfix
+
+jobs:
+  mci-check:
+    uses: glcp/managed-ci-workflow/.github/workflows/mci-check.yaml@main
+    secrets: inherit
+  mci-pre-lint:
+    uses: ./.github/workflows/mci-pre-lint.yaml
+    secrets: inherit
+  mci-lint:
+    uses: glcp/managed-ci-workflow/.github/workflows/mci-lint.yaml@main
+    secrets: inherit
+    needs: mci-pre-lint
+  mci-pre-test:
+    uses: ./.github/workflows/mci-pre-test.yaml
+    secrets: inherit
+  mci-unit-test: 
+    uses: glcp/managed-ci-workflow/.github/workflows/mci-unit-test.yaml@main
+    secrets: inherit
+    needs: mci-pre-test
+  build:
+    uses: glcp/managed-ci-workflow/.github/workflows/mci-build.yaml@main
+    secrets: inherit
+    needs: [mci-check, mci-lint, mci-unit-test]
+  post-build:
+    uses: glcp/managed-ci-workflow/.github/workflows/mci-post-build.yaml@main
+    secrets: inherit
+    needs: build

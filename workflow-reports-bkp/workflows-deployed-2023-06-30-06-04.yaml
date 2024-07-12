@@ -1,0 +1,9 @@
+startTime: 2023-06-30-06-04
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 2
+  deployedWorkflowsByRepository:
+    aluong-t1: []
+    aluong-sample-go-app:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../aluong-sample-go-app/managed-ci-workflow/workflows/managed-ci-workflow.yaml

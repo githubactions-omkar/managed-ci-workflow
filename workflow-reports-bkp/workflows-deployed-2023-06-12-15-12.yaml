@@ -1,0 +1,13 @@
+startTime: 2023-06-12-15-12
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 6
+  deployedWorkflowsByRepository:
+    rmcnamara-managed-ci-workflow-test: []
+    rmcnamara-managed-ci-workflow-test2: []
+    test-app-provision: []
+    rmcnamara-firmware-registry: []
+    service-registry:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../service-registry/managed-ci-workflow/workflows/managed-ci-workflow.yaml
+    service-provision: []

@@ -1,0 +1,98 @@
+name: MCI Self Test
+on:
+  workflow_dispatch: 
+#  pull_request:
+env:
+  TEST_MANUAL: true
+  TEST_PR_AND_MERGE: true
+    
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    name: Build Systems
+    strategy:
+      fail-fast: false
+      matrix:
+        test_repository: [managed-ci-workflow-test-generic, managed-ci-workflow-test-python, managed-ci-workflow-test-golang, managed-ci-workflow-test-scala]
+    steps:
+      - name: Cloning the repository
+        uses: actions/checkout@v3.3.0
+          
+      - name: Generate github app token
+        id: generate_token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_INSTALLATION_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_PRIVATE_KEY }}
+
+          
+      - name: Use temporary github token as Env variable
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.generate_token.outputs.token }}
+        run: |
+          echo "The generated token is masked: ${GITHUB_APP_TOKEN}"
+          echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
+          echo "GITHUB_PR_TOKEN=${{ secrets.PULL_REQUEST_SECRET }}" >> $GITHUB_ENV
+        shell: bash
+        
+      - name: Clone the test repository
+        uses: actions/checkout@v3.3.0
+        with:
+           repository: glcp/${{ matrix.test_repository }}
+           token: ${{ env.GITHUB_APP_TOKEN }}
+           ref: main
+           path: self-test
+
+      - name: "Checkout and update ${{ matrix.test_repository }}"
+        id: checkout_update
+        shell: bash
+        env:
+          ref: ${{ github.head_ref }}
+          repo: ${{ matrix.test_repository }}
+          token: ${{ env.GITHUB_APP_TOKEN }}
+          org: glcp
+        run: |
+          cd self-test
+          git checkout -b $ref
+          sed -i "/^\s*uses: glcp\/managed-ci-workflow/s/@.*/@$ref/" .github/workflows/managed-ci-manual-build.yaml
+          cat .github/workflows/managed-ci-manual-build.yaml
+          git config --global user.email "glcp-giotto@hpe.com"
+          git config --global user.name "glcp giotto"
+          git add .github/workflows/managed-ci-manual-build.yaml
+          git commit -m "Updated branch name in managed-ci-manual-build.yaml"
+          git push --set-upstream origin $ref
+
+      - name: Remote Manual Test
+        if: ${{ env.TEST_MANUAL == 'true' }}
+        uses: glcp/trigger-workflow-and-wait@v1.6.1
+        with:
+          owner: glcp
+          repo: ${{ matrix.test_repository }}
+          github_token: ${{ env.GITHUB_APP_TOKEN  }}        
+          workflow_file_name: managed-ci-manual-build.yaml
+          ref: ${{ github.head_ref }}
+          wait_interval: 60
+
+      - name: Remote PR and Merge Tests
+        if: ${{ env.TEST_PR_AND_MERGE == 'true' }} && always()
+        uses: glcp/trigger-workflow-and-wait@v1.6.1
+        with:
+          owner: glcp
+          repo: ${{ matrix.test_repository }}
+          github_token: ${{ steps.generate_token.outputs.token }}
+          workflow_file_name: mcitest-pr-and-merge.yaml
+          wait_interval: 60
+
+      - name: "Checkout and delete ${{ matrix.test_repository }}"
+        if: always()
+        id: checkout_delete
+        shell: bash
+        env:
+          ref: ${{ github.head_ref }}
+          repo: ${{ matrix.test_repository }}
+          token: ${{ secrets.ACCESS_TOKEN }}
+        run: |
+          cd self-test
+          git checkout -d $ref
+          git push origin -d $ref

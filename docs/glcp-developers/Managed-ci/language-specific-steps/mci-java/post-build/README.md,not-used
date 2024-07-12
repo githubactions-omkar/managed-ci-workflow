@@ -1,0 +1,66 @@
+
+# post-build
+post-build depends on build job and is executed during all 3 triggers. The workflow that is used for the execution of post-build [mci-post-build.yaml](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-post-build.yaml). For java based application the **sonar-maven, set-matrix-variables, sbom-upload** jobs are triggered. 
+
+## 1. set-matrix-variables
+The job is used to setup matrix output for sbom-upload matrix strategy.
+
+**The following steps are executed when conditions are satisfied**.
+|   | _Description_                                                     | _Actions_                                     | _Execution_                          |
+|:-:|:------------------------------------------------------------------|:----------------------------------------------|:-------------------------------------|
+| 1 | Download and unzip workspace artifacts uploaded in previous job   | ```actions/download-artifact@v3```            | The step is executed on all triggers |
+| 2 | set-environment variables for the job.                            | ```actions-tools/yaml-outputs@v2```           | The step is executed on all triggers |
+| 3 | set-matrix JSON output                                            | Executed using bash commands ```3*```         | The step is executed on all triggers |
+
+  3*. set matrix JSON output
+```yaml
+  - id: set-matrix
+    run: echo "::set-output name=matrix::{\"include\":[{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL1 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME1 }}\"},{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL2 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME2 }}\"},{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL3 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME3 }}\"}]}"
+
+```
+## 3. sbom-upload
+Sbom generation is done after build steps are done as a post build step only for the default branch.
+To enable sbom generation the inputs like product-name , product-version and dist-list are taken from https://github.com/glcp/managed-ci-workflow/blob/main/utils/vtn-config.yaml.
+```yaml
+Generic:
+  - name: 'properties'
+    org-name: 'GreenLake'
+    api-url: 'https://vtn.hpecorp.net/api'
+    devops-users:
+      - <email-addr1>@hpe.com
+      - <email-addr2>@hpe.com
+
+Projects:
+# Sample project Mandatory entries
+# You can provide dist-list or mgr-list&nonmgr-list, when you provide manager and nonmanager list the distribution list will be created.
+# dist-list is a distribution list available within VTN.
+# If you provide mgr-list and nonmgr-list a distribution list is created within VTN as mci-"app_name"
+  - name: 'platform-analytics-ingest-etl'
+    product-name: 'platform-analytics-ingest-etl'
+    product-version: '1.0.0'
+    dist-list: 'giotto-devops'
+    mgr-list:
+      - <some-email-addr1>@hpe.com
+    nonmgr-list:
+      - <some-email-addr2>@hpe.com
+# Sample project optional entries
+# If you have a known product-master-name and product-oid. Refer to VTN user guide for these(Defaulted to NA)
+    product-master-name: "platform-analytics"
+    product-oid: "1234"
+```
+Sbom generation and upload to VTN is done from the runner label `managed-ci-vtn`. The 
+action it uses is `glcp/mci-actions-sbom-upload@v1` which internally 
+uses `hpe-actions/cosign@v3` action for signing and few vtn api calls to upload the sbom 
+to VTN.
+The job performs the cosign, verify and uploading sbom to VTN. The job is executed only 
+on default_branch. VTN user guide [here](https://pages.github.hpe.com/PSO/VTN-User-Guide/faqs/#faq-2-what-are-product-master-names-and-oids-why-are-they-used-in-vtn)
+
+**The following steps are executed when conditions are satisfied**.
+
+|   | _Description_                                                   | _Actions_                                                      | _Execution_                                 |
+|:-:|:----------------------------------------------------------------|:---------------------------------------------------------------|:--------------------------------------------|
+| 1 | Download and unzip workspace artifacts uploaded in previous job | ```actions/download-artifact@v3```                             | The step is executed on only default branch |
+| 2 | set-environment variables for the job.                          | ```actions-tools/yaml-outputs@v2```                            | The step is executed on only default branch |
+| 3 | Docker Login to jfrog artifactory                               | ```docker/login-action@v2```                                   | The step is executed on only default branch |
+| 4 | Docker Login to quay                                            | ```docker/login-action@v2```                                   | The step is executed on only default branch |
+| 5 | Cosign verify and upload sbom                                   | ```glcp/managed-ci-workflow/actions/upload-sbom@sbom_upload``` | The step is executed on only default branch |

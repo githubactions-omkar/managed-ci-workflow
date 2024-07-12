@@ -1,0 +1,31 @@
+name: Managed CI Metrics
+
+on:
+  workflow_call:
+
+jobs:
+  mci-generate-metrics:
+    runs-on: ubuntu-latest
+    steps:    
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ secrets.ORG_POLICY_GITHUB_APP_ID }}
+          installation_id: ${{ secrets.ORG_POLICY_GITHUB_APP_INSTALL_ID }}
+          private_key: ${{ secrets.ORG_POLICY_GITHUB_APP_PRIVATE_KEY }}
+      - name: Export metrics
+        uses: glcp/mci-actions-export-metrics@main
+        with:        
+          githubToken: ${{ steps.glcp-gh-token.outputs.token }}
+          collect_workflow_run_metrics: true
+          collect_job_metrics: true
+          collect_step_metrics: true
+          clientId: ${{ vars.METRIC_CLIENT_ID }}
+          clientSecret: ${{ secrets.METRIC_CLIENT_SECRET }}
+          issuerUrl: ${{ vars.METRIC_ISSUER_URL }}
+          endpoint: ${{ vars.METRIC_ENDPOINT }}
+          #optional inputs
+          prefer_distribution_workflow_run_metrics: false
+          prefer_distribution_job_metrics: false
+          prefer_distribution_step_metrics: false

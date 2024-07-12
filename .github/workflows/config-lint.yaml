@@ -1,0 +1,47 @@
+name: 'Verify vtn config & deployer'
+
+on:
+  pull_request:
+     paths:
+      - 'utils/vtn-config.yaml'
+      - 'workflow-deployment.yaml'     
+  workflow_dispatch:
+
+jobs:
+  VTN-config-lint:
+    name: 'VTN config lint'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: utils/vtn-config.yaml
+      - name: 'Yaml lint'
+        uses: glcp/yamllint-github-action@v1
+        with:
+          yamllint_file_or_dir: utils/vtn-config.yaml
+          yamllint_strict: false
+          yamllint_nowarnings: true
+          yamllint_comment: false
+          yamllint_config_datapath: relaxed
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+  Workflow-deployer-lint:
+    name: 'Workflow deployer lint'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: workflow-deployment.yaml
+      - name: 'Yaml lint'
+        uses: glcp/yamllint-github-action@v1
+        with:
+          yamllint_file_or_dir: workflow-deployment.yaml
+          yamllint_strict: false
+          yamllint_nowarnings: true
+          yamllint_comment: false
+          yamllint_config_datapath: relaxed
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}

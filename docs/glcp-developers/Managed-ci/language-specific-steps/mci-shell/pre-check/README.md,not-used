@@ -1,0 +1,42 @@
+# pre-check
+The pre-check job is executed in all three **'managed-ci-*'** workflows. The pre-check job is used for validation of the CI. The workflow used for the execution of pre-check is [mci-pre-check.yaml](https://github.com/glcp/managed-ci-workflow/blob/v1.2.0/.github/workflows/mci-pre-check.yaml).
+
+The jobs that are executed for script based application on pre-check
+| _Jobs_             | _Description_                                                                  |
+|--------------------|--------------------------------------------------------------------------------|
+| **secret-scanner** | Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the latest commit code-owner. |
+| **malware-scanner**| Malware scanner is executed without any conditions on all repositories. As the name suggests the jobs scans the malware in the repo on a Pull Request and reports it in the comments of the PR |
+| **mci-shell** |  job is intended for shell script based repos. The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'shell'**].|
+
+## 1. secret-scanner:
+  Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner.
+  The workflow used for the execution of secret-scanner is [scanning-workflow.yml](https://github.com/glcp/Secret-Scan-Tool/blob/main/.github/workflows/scanning-workflow.yml)
+
+### Deafult Inputs for secret-scan
+| _Input_             | _Default_                               | _Description_                                                       | _Required_  |
+|:-------------------:|:----------------------------------------|:--------------------------------------------------------------------|:------------|
+| repo                | ```${{github.event.repository.name}}``` | Name of the repository where secret scan need to be executed        | true        |
+| branch              | ```${{github.ref_name}}```              | Branch in which secret-scan need to be executed on the given repo   | true        |
+
+## 2. malware-scanner:
+  Malware Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the malware in the repo on a Pull Request and reports it in the comments of the PR. if any malware is found the workflow will fail. The scan summary is reported to the comments of the PR irrespective of the result of the scan.
+
+ The workflow used for the execution of malware-scanner is [malware scan workflow](
+https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-clamav.yml).  There is no variable or parameter needed for this worklow.
+
+## 3. mci-shell:
+The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'shell'**]. 
+
+  **when the conditions are satisfied the job does the following actions in order.**
+
+  |   | _description_                          | _actions_                                 | _execution_                          |
+  |:-:|:---------------------------------------|:------------------------------------------|:-------------------------------------|
+  | 1 | Clone the Repository                   |```actions/checkout@v3.3.0```              | The step is executed on all triggers |
+  | 2 | Variables restore                      |```glcp/mci-actions-variables-restore@v1```| The step is executed on all triggers |
+  | 3 | Variables backup                       |```glcp/mci-actions-variables-backup@v1``` | The step is executed on all triggers |
+  | 4 | workspace backup                       |```actions/upload-artifact@v3```           | The step is executed on all triggers |
+
+## Inputs/Secrets for mci-shell
+| _Input_            | _Default_                                  | _Description_                                              | _Required_ |
+|:-------------------|:-------------------------------------------|:-----------------------------------------------------------|:---------- |
+| gh_token           | ```${{ secrets.GLCP_GH_TOKEN }}```         | Github Token                                               | true       |

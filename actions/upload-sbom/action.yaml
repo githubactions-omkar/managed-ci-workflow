@@ -1,0 +1,40 @@
+name: 'Action for Sbom generate and upload'
+description: 'Action for Sbom generate and upload'
+inputs:
+  ARTIFACT_URL:
+    Description: Artifact url
+    type: string
+  APP_NAME:
+    Description: Application name
+    type: string
+  PRODUCT_NAME:
+    Description: Product name
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+
+      - name: Checkout managed-ci utils
+        uses: actions/checkout@v3.3.0
+        with:
+          token: ${{ env.GH_TOKEN }}
+          repository: glcp/managed-ci-workflow
+          path: managed-ci
+
+      - name: Cosign Sign and Verify
+        uses: hpe-actions/cosign@v3
+        with:
+          generate_sbom: true
+          tags: ${{ inputs.ARTIFACT_URL }}
+          generate_fs_sbom: false
+          cleanup_sbom_files: false
+          syft_sbom_type: spdx-json
+
+      - name: Upload sbom file
+        id: sbom-upload
+        shell: bash
+        run: |
+              export PYTHONWARNINGS="ignore:Unverified HTTPS request"
+              python3 managed-ci/utils/upload-sbom.py -u ${{ env.VTN_USER }} -p ${{ env.VTN_PASSWORD }} -a ${{ inputs.APP_NAME }} -n ${{ inputs.PRODUCT_NAME }} -f managed-ci/utils/vtn-config.yaml
+

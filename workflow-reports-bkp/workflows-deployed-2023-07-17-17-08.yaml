@@ -1,0 +1,10 @@
+startTime: 2023-07-17-17-08
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 4
+  deployedWorkflowsByRepository:
+    managed-ci-workflow-test-maven: []
+    managed-ci-workflow-test-python: []
+    managed-ci-workflow-test-golang: []
+    managed-ci-workflow-test-scala: []

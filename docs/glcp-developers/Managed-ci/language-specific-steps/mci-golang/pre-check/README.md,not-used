@@ -1,0 +1,30 @@
+# pre-check
+  The validation of the CI is done on pre-check. The workflow used for the execution of pre-check is [mci-pre-check.yaml](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-pre-check.yaml). For java based application the **secret-scanner, mci-maven** jobs are triggered.
+
+The jobs that are executed for python based application on pre-check
+
+| _Jobs_             | _Description_                                                                  |
+|--------------------|--------------------------------------------------------------------------------|
+| **secret-scanner** | Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner. |
+| **mci-golang**     | python job is intended for application based on **golang**. The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'golang'**].|
+
+## 1. secret-scanner:
+Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner.
+The workflow used for the execution of secret-scanner is [scanning-workflow.yml](https://github.com/glcp/Secret-Scan-Tool/blob/main/.github/workflows/scanning-workflow.yml)
+
+### Deafult Inputs for secret-scan
+
+| _Input_             | _Default_                               | _Description_                                                       | _Required_  |
+|:-------------------:|:----------------------------------------|:--------------------------------------------------------------------|:------------|
+| repo                | ```${{github.event.repository.name}}``` | Name of the repository where secret scan need to be executed        | true        |
+| branch              | ```${{github.ref_name}}```              | Branch in which secret-scan need to be executed on the given repo   | true        |
+
+## 2. mci-golang:
+The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'golang'**]. 
+
+**when the conditions are satisfied the job does the following actions.**
+
+|   | _description_                                                                                  | _actions_                        | _execution_                          |
+|:-:|:-----------------------------------------------------------------------------------------------|:---------------------------------|:-------------------------------------|
+| 1 | Clone the Repository                                                                           | ```actions/checkout@v3.3.0```    | The step is executed on all triggers |
+| 2 | zip and upload artifacts as workspace and workspace-clean-artifacts to use them in future jobs | ```actions/upload-artifact@v3``` | The step is executed on all triggers |

@@ -1,0 +1,8 @@
+startTime: 2023-07-18-16-19
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 1
+  deployedWorkflowsByRepository:
+    managed-ci-workflow-test-python:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../managed-ci-workflow-test-python/managed-ci-workflow/workflows/managed-ci-pr-ft.yaml

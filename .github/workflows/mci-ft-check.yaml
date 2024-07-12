@@ -1,0 +1,40 @@
+name: MCI Call - Check PR Approvals for FT
+
+on:
+  workflow_call:
+
+jobs:
+  check-pr-approvals:
+    name: Check for 2 PR approvals
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+    - uses: glcp/mci-actions-pr-ft-approval-check@v1.0
+      if: github.event_name == 'pull_request_review' && github.event.action == 'submitted'
+      id: approvals_checker
+      with:
+        approvals: 2
+        gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Generate github app token
+      id: generate-token
+      uses: glcp/github-app-token-action@v1.7.0
+      with:
+        app_id: ${{ vars.MANAGED_CI_WORKFLOW_APP_ID }}
+        private_key: ${{ secrets.MANAGED_CI_WORKFLOW_PRIVATE_KEY }}
+
+    - uses: actions/github-script@v7
+      id: create_ft_on_pr_label
+      if: steps.approvals_checker.outputs.should_run_ft == 'true'
+      with:
+        # github-token: ${{ secrets.TEST_PAT }}
+        github-token: ${{ steps.generate-token.outputs.token }}
+        script: |
+          await github.rest.issues.addLabels({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            labels: ['trigger_ft_on_pr_workflow']
+          })

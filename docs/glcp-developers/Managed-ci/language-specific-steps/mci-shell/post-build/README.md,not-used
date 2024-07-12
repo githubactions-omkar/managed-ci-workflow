@@ -1,0 +1,58 @@
+# post-build
+post-build depends on build job and is executed during all 3 triggers. The workflow that is used for the execution of post-build [mci-post-build.yaml](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-post-build.yaml). For GO based application the **sonar-golang, set-matrix-variables, sbom-upload** jobs are triggered. 
+
+## 1. sonar-golang 
+The sonar-golang job is triggered on all trigger events. It performs the code quality analysis and check the quality gate status. The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'golang'**] 
+
+**The following steps are executed when conditions are satisfied**.
+
+|   | _Description_                                                     | _Actions_                             | _Execution_                          |
+|:-:|:------------------------------------------------------------------|:--------------------------------------|:-------------------------------------|
+| 1 | Download and unzip workspace artifacts uploaded in previous job   | ```actions/download-artifact@v3```    | The step is executed on all triggers |
+| 2 | set-environment variables for the job.                            | ```actions-tools/yaml-outputs@v2```   | The step is executed on all triggers |
+| 3 | Sonar Scan on the repository                                      | ```hpe-actions/sonarqube-scan@main``` | The step is executed on all triggers |
+
+## 2. set-matrix-variables
+The job is used to seup matrix output for sbom-upload matrix startegy.
+
+**The following steps are executed when conditions are satisfied**.
+
+|   | _Description_                                                     | _Actions_                             | _Execution_                          |
+|:-:|:------------------------------------------------------------------|:--------------------------------------|:-------------------------------------|
+| 1 | Download and unzip workspace artifacts uploaded in previous job   | ```actions/download-artifact@v3```    | The step is executed on all triggers |
+| 2 | set-environment variables for the job.                            | ```actions-tools/yaml-outputs@v2```   | The step is executed on all triggers |
+| 3 | ste-matrix JSON output                                            | Executed using bash commands ```3*``` | The step is executed on all triggers |
+
+3*. set matrix JSON output
+```yaml
+  - id: set-matrix
+    run: echo "::set-output name=matrix::{\"include\":[{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL1 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME1 }}\"},{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL2 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME2 }}\"},{\"ARTIFACT_URL\":\"${{ env.ARTIFACT_URL3 }}\",\"PRODUCT_NAME\":\"${{ env.PRODUCT_NAME3 }}\"}]}"
+
+```
+## 3. sbom-upload
+Sbom generation is done after build steps are done as a post build step only for the default branch.
+To enable sbom generation the inputs like product-name , product-version and dist-list are taken from https://github.com/glcp/managed-ci-workflow/blob/main/utils/vtn-config.yaml.
+```yaml
+Generic:
+  - name: 'properties'
+    org-name: 'GreenLake'
+    api-url: 'https://vtn.hpecorp.net/api'
+ 
+Projects:
+  - name: 'platform-analytics-ingest-etl'
+    product-name: 'platform-analytics-ingest-etl'
+    product-version: '1.0.0'
+    dist-list: 'giotto-devops'
+``` 
+Sbom generation and upload to VTN is done from the runner label ```managed-ci-vtn```. The action it uses is ```glcp/managed-ci-workflow/actions/upload-sbom@2.0.0``` which internally uses ```hpe-actions/cosign@v3``` action for signing and few vtn api calls to upload the sbom to VTN.
+The job performs the cosign, verify and uploding sbom to VTN. The job is executed only on default_branch
+
+**The following steps are executed when conditions are satisfied**.
+
+|   | _Description_                                                   | _Actions_                                     | _Execution_                                 |
+|:-:|:----------------------------------------------------------------|:----------------------------------------------|:--------------------------------------------|
+| 1 | Download and unzip workspace artifacts uploaded in previous job | ```actions/download-artifact@v3```            | The step is executed on only default branch |
+| 2 | set-environment variables for the job.                          | ```actions-tools/yaml-outputs@v2```           | The step is executed on only default branch |
+| 3 | Docker Login to jfrog artifactory                               | ```docker/login-action@v2```                  | The step is executed on only default branch |
+| 4 | Docker Login to quay                                            | ```docker/login-action@v2```                  | The step is executed on only default branch |
+| 5 | Cosign verify and upload sbom                   | ```glcp/managed-ci-workflow/actions/upload-sbom@sbom_upload```| The step is executed on only default branch |

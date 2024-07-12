@@ -1,0 +1,16 @@
+startTime: 2023-03-17-04-36
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 2
+  deployedWorkflowsByRepository:
+    rmcnamara-managed-ci-workflow-test:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/templates/mci-pre-stage.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/templates/mci-pre-test.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/templates/mci-build.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/workflows/managed-ci-workflow.yaml
+    rmcnamara-managed-ci-workflow-test2:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test2/managed-ci-workflow/templates/mci-pre-stage.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test2/managed-ci-workflow/templates/mci-pre-test.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test2/managed-ci-workflow/templates/mci-build.yaml
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test2/managed-ci-workflow/workflows/managed-ci-workflow.yaml

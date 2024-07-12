@@ -1,0 +1,14 @@
+startTime: 2023-04-13-02-20
+modules:
+- name: managed-ci-workflow
+  description: Managed CI Workflow
+  scannedRepositories: 4
+  deployedWorkflowsByRepository:
+    rmcnamara-managed-ci-workflow-test:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test/managed-ci-workflow/workflows/managed-ci-workflow.yaml
+    rmcnamara-managed-ci-workflow-test2:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-managed-ci-workflow-test2/managed-ci-workflow/workflows/managed-ci-workflow.yaml
+    test-app-provision:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../test-app-provision/managed-ci-workflow/workflows/managed-ci-workflow.yaml
+    rmcnamara-firmware-registry:
+    - /home/runner/work/managed-ci-workflow/managed-ci-workflow/modules/../rmcnamara-firmware-registry/managed-ci-workflow/workflows/managed-ci-workflow.yaml

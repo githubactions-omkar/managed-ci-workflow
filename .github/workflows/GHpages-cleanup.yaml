@@ -1,0 +1,46 @@
+name: Managed CI GH pages cleanup
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # Run every day at midnight  
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the MCI repository
+        uses: actions/checkout@v3.3.0
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: tibdex/github-app-token@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_INSTALLATION_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_PRIVATE_KEY }}
+          
+      - name: Use github token as Env variable
+        env:
+          GITHUB_APP_TOKEN: ${{ secrets.APP_TOKEN }}
+        run: |
+          echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
+        shell: bash          
+
+      - name: Install Python modules
+        run: |
+          pip3 install ruamel.yaml
+          pip3 install pyyaml
+          pip3 install requests
+          pip install gitpython
+          git config --global user.email "glcp-giotto@hpe.com"
+          git config --global user.name "Automation"
+          
+
+      - name: Invoke Python script to cleanup GH pages
+        run: |
+          python gh-pages.py
+        shell: bash
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.glcp-gh-token.outputs.token }}
+        
+

@@ -1,0 +1,43 @@
+# pre-check
+   The validation of the CI is done on pre-check. The workflow used for the execution of pre-check is [mci-pre-check.yaml](https://github.com/glcp/managed-ci-workflow/blob/main/.github/workflows/mci-pre-check.yaml). For java based application the **secret-scanner, mci-maven** jobs are triggered.
+
+**The jobs that are executed for java based application using maven build tool on pre-check**
+| _Jobs_             | _Description_                                                                  |
+|--------------------|--------------------------------------------------------------------------------|
+| **secret-scanner** | Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner. |
+| **malware-scanner** | Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner. |
+| **mci-maven**     | mci-maven job is intended for application based on **maven**. The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'maven'**].|
+
+## 1. secret-scanner:
+  Secret Scanner is executed without any conditions on all repositories. As the name suggests the jobs scans for the unencrypted/plain-text secrets/passwords in the latest commit and reports it to the code-owner.
+  The workflow used for the execution of secret-scanner is [scanning-workflow.yml](https://github.com/glcp/Secret-Scan-Tool/blob/main/.github/workflows/scanning-workflow.yml)
+
+### Deafult Inputs for secret-scan
+| _Input_             | _Default_                               | _Description_                                                       | _Required_  |
+|:-------------------:|:----------------------------------------|:--------------------------------------------------------------------|:------------|
+| repo                | ```${{github.event.repository.name}}``` | Name of the repository where secret scan need to be executed        | true        |
+| branch              | ```${{github.ref_name}}```              | Branch in which secret-scan need to be executed on the given repo   | true        |
+
+## 2. mci-maven:
+The job is executed based on the conditions provided in **Repository Variables** [**if: vars.GLCP_BUILD_SYSTEM == 'maven'**]. 
+
+  **when the conditions are satisfied the job does the following actions in order.**
+
+  |   | _description_                                                                                          | _actions_                                                      | _execution_                          |
+  |:-:|:-------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------|:-------------------------------------|
+  | 1 | Clone the Repository                                                                                   | ```actions/checkout@v3.3.0```                                  | The step is executed on all triggers |
+  | 2 | set-environment variables for the job.                                                                 | ```actions-tools/yaml-outputs@v2```                            | The step is executed on all triggers |
+  | 3 | Validate / Add Ticket to PR Title                                                                      | ```glcp/ccs-automation/ci_cd_commons/pr_title_validation@v2``` | The step is executed only on PR      |
+  | 4 | zip and upload artifacts with names workspace and workspace-clean-artifacts to use them in future jobs | ```actions/upload-artifact@v3```                               | The step is executed on all triggers |
+
+### Inputs/Secrets for mci-maven
+| _Input_            | _Default_                                   | _Description_               | _Required_ |
+|:-------------------|:--------------------------------------------|:----------------------------|:-----------|
+| pull_request_title | ```${{ github.event.pull_request.title }``` | The title of PR             | true       |
+| jira_user          | ```${{ secrets.CCS_JIRA_USER }}```          | User to connect HPE JIRA    | true       |
+| jira_apikey        | ```${{ secrets.CCS_JIRA_APIKEY }}```        | API Key to connect HPE JIRA | true       |
+| gh_token           | ```${{ secrets.GLCP_GH_TOKEN }}```          | Github Token                | true       |     | _Default_                                     | _Description_             | _Required_ |
+|:------------------------|:----------------------------------------------|:--------------------------|:-----------|
+| pr-branch-name          | ```${{ github.head_ref }}```                  | The branch name in the PR | true       |
+| pr-number               | ```${{ github.event.number }}```              | User to connect HPE JIRA  | true       |
+| pr-title                | ```${{ github.event.pull_request.title }}```  | Title of PR               | true       |

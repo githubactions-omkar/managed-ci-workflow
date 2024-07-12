@@ -1,0 +1,91 @@
+name: build
+
+on:
+  workflow_call:
+
+jobs:
+  getbuildsystem:
+   runs-on: ubuntu-latest
+   outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+   steps:
+        - uses: glcp/mci-actions-get-build-system@v1
+          id: get_build_system
+          with:
+            gh_token: ${{ secrets.GITHUB_TOKEN }}
+            vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }}
+            git_ref: ${{ github.ref }}
+  python:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'python' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-python.yaml
+    secrets: inherit
+  python-lib:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'python-lib' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-python-lib.yaml
+    secrets: inherit
+  maven:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'maven' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-maven.yaml
+    secrets: inherit
+  sbt:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'sbt' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-sbt.yaml
+    secrets: inherit
+  golang:
+    needs: getbuildsystem  
+    if: ( needs.getbuildsystem.outputs.output == 'golang' || needs.getbuildsystem.outputs.output == 'golang-lib' ) && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-go.yaml
+    secrets: inherit
+  shell:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'shell' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-script.yaml
+    secrets: inherit
+  terraform:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'terraform' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-terraform.yaml
+    secrets: inherit
+  javascript:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'javascript' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-javascript.yaml
+    secrets: inherit
+  javascript-image:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'javascript-image' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-javascript-image.yaml
+    secrets: inherit
+  onprem:
+    needs: getbuildsystem
+    if: needs.getbuildsystem.outputs.output == 'onprem' && github.event.pull_request.user.login != 'dependabot[bot]'
+    uses: ./.github/workflows/mci-build-onprem.yaml
+    secrets: inherit
+
+  status-check:
+    needs: [getbuildsystem, python, python-lib, maven, golang, shell, sbt, terraform, onprem, javascript, javascript-image ]
+    runs-on: ubuntu-latest
+    if: always() && !failure() && !cancelled()
+    outputs:
+      success: ${{ steps.setoutput.outputs.success }}
+    steps:
+      - id: setoutput
+        run: echo "success=true" >> $GITHUB_OUTPUT
+  build-done:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: status-check
+    steps:
+      - run: |
+          passed="${{ needs.status-check.outputs.success }}"
+          if [[ $passed == "true" ]]; then
+            echo "MCI BUILD COMPLETED SUCCESSFULLY"
+            exit 0
+          else
+            echo "MCI BUILD FAILED"
+            exit 1
+          fi

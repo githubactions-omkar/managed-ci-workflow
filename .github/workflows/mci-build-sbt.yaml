@@ -1,0 +1,177 @@
+name: CI Build
+on:
+  workflow_call:
+
+jobs:
+  mci-sbt:
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event.action == 'released' || github.event_name == 'workflow_dispatch'
+    env:
+      ARTIFACTORY_USER: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+      ARTIFACTORY_PWD: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:          
+          fetch-depth: 0  # To fetch tags
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: Set up JDK 
+        if: env.GRAAL_VM_JAVA_VERSION == '' && env.JAVA_VERSION != ''
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+
+      - name: Set up GraalVM 
+        if: env.GRAAL_VM_JAVA_VERSION != ''
+        uses: glcp/setup-graalvm@v1
+        with:
+          java-version: ${{ env.GRAAL_VM_JAVA_VERSION }}
+          distribution: ${{ env.GRAAL_VM_DISTRIBUTION }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Add SBT credentials for Artifactory
+        uses: glcp/harmony-actions-artifactory-credentials@master
+        with:
+          ARTIFACTORY_USER: ${{ env.ARTIFACTORY_USER }}
+          ARTIFACTORY_PWD: ${{ env.ARTIFACTORY_PWD }}
+
+      - name: Copy Credentials to right location
+        shell: bash
+        run: |
+          set -e -x
+          mkdir -p $HOME/.ivy2/
+          cp "/home/runner/work/_temp/_github_home/.ivy2/.credentials-hpeartifacts.jfrog.io" \
+            "$HOME/.ivy2/.credentials-hpeartifacts.jfrog.io"
+          mkdir -p $HOME/.pip/
+          cp "/home/runner/work/_temp/_github_home/.pip/pip.conf" \
+            "$HOME/.pip/pip.conf"
+          cp "/home/runner/work/_temp/_github_home/.pypirc" \
+            "$HOME/.pypirc"
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_INSTALLATION_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_PRIVATE_KEY }}
+
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Setup helm
+        shell: bash
+        run: |
+          helm plugin install https://github.com/belitre/helm-push-artifactory-plugin --version 1.0.2
+          helm repo add helm-harmony-ops-local https://hpeartifacts.jfrog.io/hpeartifacts/helm-harmony-ops-local \
+            --force-update --username ${{ env.ARTIFACTORY_USER }} --password ${{ env.ARTIFACTORY_PWD }}
+          helm repo update
+
+      - name: Build and Publish Artifact
+        env:
+          HPE_ARTIFACTORY_USERNAME: ${{ env.ARTIFACTORY_USER }}
+          HPE_ARTIFACTORY_PASSWORD: ${{ env.ARTIFACTORY_PWD }}
+        run: sbt build
+        shell: bash
+          
+      - name: Set ARTIFACT_URLS with sha1s
+        shell: bash
+        run: |
+          while read -r name; do
+            read -r uri
+            if [[ "$uri" != "null" ]]; then
+              artifact_url=$(docker inspect --format='{{index .RepoDigests 0}}' $uri)
+              export name
+              export artifact_url
+              yq -i '.SBOM += [{"PRODUCT_NAME": strenv(name), "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+            fi
+          done < <( jq -cr '.artifacts[] | select(.type == "docker") | (.name, .artifactURI)' target/artifacts.json)
+
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Write version to file
+        shell: bash
+        run: |
+          set -e -x
+          sbt version > target/version.txt
+
+      - name: Checkout harmony-versions
+        uses: actions/checkout@v3.3.0
+        with:
+          token: ${{ steps.glcp-gh-token.outputs.token }}
+          repository: glcp/harmony-versions
+          path: harmony-versions
+        
+      - name: Update harmony-versions
+        shell: bash
+        run: |
+          export REPOSITORY=${{ github.repository }}
+          cat > exec.py <<- EOM
+          import json, os, sys, yaml, re
+          manifest_path="harmony-versions/manifests/harmony-version.yaml"
+          version_path="target/version.txt"
+          # Generate pyspark version from actual version. Equaivalent to https://github.com/glcp/harmony-core/blob/master/pyspark_base/build.sbt#L8-L38
+          def pyspark_version(version):
+            version = version.replace("-", ".").split(".")
+            if len(version) == 3:
+              return version[0] + "." + version[1] + "." + version[2]
+            elif len(version) <= 5:
+              return version[0] + "." + version[1] + "." + version[2] + ".dev"
+            else:
+              tail = version[4:len(version)-1]
+              dirty = 1 if len(tail) > 1 else 0
+              commit = tail[0]
+              return version[0] + "." + version[1] + "." + version[2] + ".dev" + str(int(commit, 16)) + str(dirty)
+          with open(version_path, 'r', encoding='utf-8', errors='replace') as v:
+              regex = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+              artifact_version = regex.sub('', v.read().split()[-2])
+          with open(manifest_path) as m:
+              artifact_repo = os.environ['REPOSITORY']
+              manifest = yaml.load(m, Loader=yaml.Loader)
+              for a in manifest:
+                  if a == 'helm-hdu' or a == 'helm-ingest':
+                      for b in manifest[a]:
+                          manifest_repo = manifest[a][b]["git-repo"]
+                          if artifact_repo in manifest_repo:
+                              manifest[a][b]["tag"] = str(artifact_version)
+                  else:
+                      manifest_repo = manifest[a]["repo"]
+                      if artifact_repo in manifest_repo:
+                          if a == 'harmony-pyspark':
+                            artifact_version = pyspark_version(artifact_version)
+                          manifest[a]["tag"] = str(artifact_version)
+          with open(manifest_path, 'w') as m:
+              yaml.dump(manifest, m)
+          EOM
+          python exec.py
+          
+      - name: commit
+        shell: bash
+        id: commit_step
+        env:
+          GITHUB_TOKEN: ${{ steps.glcp-gh-token.outputs.token }}
+          GIT_AUTHOR_NAME: ghe-action
+          GIT_AUTHOR_EMAIL: glcp-gh-bot@github.com
+          GIT_COMMITTER_NAME: ghe-action
+          GIT_COMMITTER_EMAIL: glcp-gh-bot@github.com
+        run: |
+          cd harmony-versions
+          git add manifests/harmony-version.yaml
+          git commit -m "Update versions (${{ github.repository }})" --no-verify || echo "Nothing to commit"
+          if [[ ${{ github.ref }} == 'refs/heads/master' ]]
+          then
+            git push --no-verify || echo "Nothing to push"
+          fi
+
+      - uses: glcp/mci-actions-sbt-backup@v1
+

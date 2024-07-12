@@ -1,0 +1,1104 @@
+name: unit-test
+
+on:
+  workflow_call:
+    outputs:
+      unit-test:
+        description: "Status of the unit test job"
+        value: ${{ jobs.status-output.outputs.unit-test }}
+
+jobs:
+  getbuildsystem:
+   runs-on: ubuntu-latest
+   outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+   steps:
+        - uses: glcp/mci-actions-get-build-system@v1
+          id: get_build_system
+          with:
+            gh_token: ${{ secrets.GITHUB_TOKEN }}
+            vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }} 
+            git_ref: ${{ github.ref }}  
+
+  skip-checks:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      skip_checks: ${{ steps.checks.outputs.SKIP_CHECKS }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+
+      - name: output to skip checks
+        id: checks
+        run: |
+          echo "skip_checks=${{ env.SKIP_CHECKS }}" >> $GITHUB_OUTPUT
+
+  get-docker-image-name:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - name: Get Docker image name from MCI variables
+        id: this-docker-image-name
+        run: |
+          echo "BUILD_CONTAINER_IMAGE=$BUILD_CONTAINER_IMAGE" >> $GITHUB_OUTPUT
+    outputs:
+        docker-image-name: ${{ steps.this-docker-image-name.outputs.BUILD_CONTAINER_IMAGE }}
+
+  get-mci-variables:
+    name: Get variables from mci-variables
+    runs-on: ubuntu-latest
+    outputs:
+      unit_test_scripts : ${{ steps.mci-restore.outputs.unit_test_scripts  }}
+      jfrog_username: ${{ steps.jfrog-creds.outputs.JFROG_USERNAME }}
+      jfrog_password: ${{ steps.jfrog-creds.outputs.JFROG_PASSWORD }}
+    steps:
+      - id: mci-restore
+        uses: glcp/mci-actions-variables-restore@v4
+        with:
+          source: checkout       
+          
+      -  name: Set JFrog Credentials
+         id: jfrog-creds
+         uses: glcp/mci-action-jfrog-credentials@v1.0.0
+         with:
+           JFROG_URL: $JFROG_URL
+           secrets: ${{ toJson(secrets) }}
+
+  python:
+    if: |
+      !cancelled() && ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      (needs.getbuildsystem.outputs.output == 'python' || needs.getbuildsystem.outputs.output == 'python-lib') 
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    runs-on: [ubuntu-latest]
+    env:
+      quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+      quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      JFROG_USERNAME: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      JFROG_PASSWORD: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+      # gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Bootstrap Dev Env form local
+        id: dev-env-local
+        if: env.DEV_ENV_LOCAL == 'true'
+        run: |
+          pwd
+          ls -al
+          chmod 755 automation/ci/bootstrap_dev_env.sh
+          ./automation/ci/bootstrap_dev_env.sh $GITHUB_WORKSPACE ${{ secrets.GLCP_GH_TOKEN }} ${{ github.event_name }} ${{ github.ref_name }} ${{ github.event.pull_request.head.repo.full_name }} ${{ github.head_ref }}
+
+      - name: Use temporary github token as Env variable
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.glcp-gh-token.outputs.token }}
+        run: |
+          echo "The generated token is masked: ${GITHUB_APP_TOKEN}"
+          echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
+        shell: bash
+
+      - name: BootStrap Dev Env
+        id: bootstrap
+        if: steps.dev-env-local.outcome == 'skipped'
+        uses: glcp/mci-actions-bootstrap-dev-env@v3.0.1
+        with:
+          gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+          app_name: ${{ env.APP_NAME }}
+          devenv_dir: ${{ env.DEV_ENV_DIR }}
+          devenv_tag: ${{ env.DEV_ENV_TAG }}
+          dc_project_name: ${{ env.DC_PROJECT_NAME }}
+          dc_project_services: ${{ env.UT_DC_PROJECT_SERVICES }}
+          dc_mode: ${{ env.UT_DC_RUNEXEC_MODE }}
+          dc_command: ${{ env.UT_DC_COMMAND }}
+          dc_service: ${{ env.UT_DC_SERVICE }}
+          dc_build: ${{ env.UT_DC_BUILD }}
+          dc_file: ${{ env.UT_DC_FILE }}
+          registry: quay.io
+          quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+          quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+          jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+          jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+
+      - name: Find unit test script
+        id: testscript
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.DEV_ENV_DIR }}
+          if test -f ws/${{ env.APP_NAME }}/scripts/unittest.sh; then
+              echo "TEST_SCRIPT=scripts/unittest.sh" >> $GITHUB_OUTPUT
+          elif test -f ws/${{ env.APP_NAME }}/scripts/test.sh; then
+              echo "TEST_SCRIPT=scripts/test.sh" >> $GITHUB_OUTPUT
+          else
+              echo "No Test Script available"
+          fi
+
+      - name: Unit Tests
+        id: unit_tests
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.DEV_ENV_DIR }}
+          ws/${{ env.APP_NAME }}/automation/ci/run-in-ccs-dev.sh \
+              ${{ env.DC_PROJECT_NAME }} \
+            poetry run ${{ steps.testscript.outputs.TEST_SCRIPT }}
+
+      - name: Override Python Coverage Source Path for Sonar
+        shell: bash
+        run: |
+          file=$(sudo find . -name coverage.xml -print)
+          echo "$file"
+          if [[ -z "${{ env.APP_DIR }}" ]]; then export APP_DIR=app ; fi
+          sed -i -e "s,<source>.*</source>,<source>/github/workspace/${{env.DEV_ENV_DIR}}/ws/${{env.APP_NAME}}/${APP_DIR}/</source>,g" $file
+          
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'  
+        name: copy reports to Sonar scan basedir
+        shell: bash
+        run: |
+             find ./ -maxdepth 1 -name \*-report.xml -exec cp -prv {} ${{ env.DEV_ENV_DIR }}/ws/${{ env.APP_NAME }}/ \;
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@v1
+        with:
+          scan_metadata_report_file: ${{ env.DEV_ENV_DIR }}/ws/${{ env.APP_NAME }}/.scannerwork/report-task.txt
+          project_basedir: ${{ env.DEV_ENV_DIR }}/ws/${{ env.APP_NAME }}
+          project_properties: ${{ env.DEV_ENV_DIR }}/ws/${{ env.APP_NAME }}/sonar-project.properties
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+          
+      - name: show contents of report file
+        shell: bash
+        run: |
+          cat ${{ env.DEV_ENV_DIR }}/ws/${{ env.APP_NAME }}/.scannerwork/report-task.txt
+
+      - uses: glcp/mci-actions-variables-backup@v2
+        with:
+          artifact-name: variables-test
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  maven:
+    if: |
+      !cancelled() &&  needs.skip-checks.result != 'failure'  &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      needs.getbuildsystem.outputs.output == 'maven'
+    needs: [getbuildsystem, get-docker-image-name, skip-checks, get-mci-variables]
+    runs-on: ubuntu-latest
+    env:
+      quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+      quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+      jfrog_user: ${{ needs.get-mci-variables.outputs.jfrog_username}}
+      JFROG_USERNAME: ${{ needs.get-mci-variables.outputs.jfrog_username }}
+      jfrog_passwd: ${{ needs.get-mci-variables.outputs.jfrog_password }}
+      JFROG_PASSWORD: ${{ needs.get-mci-variables.outputs.jfrog_password }}
+      gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+      updatectl_user: ${{ secrets.CCS_UPDATECTL_USER }}
+      updatectl_server: ${{ secrets.CCS_UPDATECTL_SERVER }}
+      updatectl_key: ${{ secrets.CCS_UPDATECTL_KEY }}
+      jira_user: ${{ secrets.CCS_JIRA_USER }}
+      jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+      COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+      COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+      COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+      MAVEN_HOME: /usr/share/maven
+      MAVEN_CONFIG: /root/.m2
+      MOCK_APP_NAME: mock-ccs-cluster
+      DEV_ENV_DIR: subscription-management-dev-env
+      DC_PROJECT_NAME: subscription-management-ci
+      MARKER_FEATURE_NOT_READY: FeatureNotReady
+      MARKER_REGRESSION: Regression
+      MARKER_INTERNAL: Internal
+    container:
+      image: ${{ needs.get-docker-image-name.outputs.docker-image-name }}
+      credentials:
+        username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+        password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+    steps:
+      - if: ${{ needs.get-docker-image-name.outputs.docker-image-name }} != ''
+        run: |
+          # The workspace backup require "zip" and the workspace restore 
+          # require "unzip".  Since we're running inside the container, 
+          # the "unzip" needs to be installed prior to restoring the workspace.
+          apt-get update
+          apt-get -y install zip unzip
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0          
+
+      - name: Install dependencies
+        if: ${{ needs.get-docker-image-name.outputs.docker-image-name }} != ''
+        shell: bash
+        run: |
+          chmod +x ./install-dependencies.sh
+          ./install-dependencies.sh
+          
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set env var VERSION_NUMBER
+        uses: glcp/mci-actions-version-number@v1
+
+      - name: Assemble Git Tag
+        id: tag_version
+        uses: glcp/mci-actions-version-tag/java@v1
+        with:
+          push_tag: false
+
+      - name: Unit Tests
+        shell: bash
+        run: |
+          chmod +x ./build_ut.sh
+          ./build_ut.sh
+
+      - name: SonarQube Scan
+        if: github.event_name != 'workflow_dispatch'
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@v1
+        with:
+           sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - name: Push to JFrog
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          if [ "$SKIP_JFROG_PUSH" == "true" ]; then
+              echo "skipping; SKIP_JFROG_PUSH is set to 'true'"
+              exit 0
+          fi
+
+          version=${{ steps.tag_version.outputs.tag }}
+          export BRANCH_VERSION=${version}
+          mvn -B -X versions:set -DnewVersion=${BRANCH_VERSION}.${GITHUB_RUN_NUMBER}
+          mvn -s settings.xml -B deploy -DskipTests -Dcheckstyle.skip -Dskip.it=true -Dsonar.skip
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  golang-lib:
+    if: |
+      !cancelled() &&
+      !failure() &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      needs.getbuildsystem.outputs.output == 'golang-lib'
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      # not helpful when running in dev-env?
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Bootstrap Dev Env from local
+        id: dev-env-local
+        if: env.DEV_ENV_LOCAL == 'true'
+        run: |
+          pwd
+          ls -al
+          chmod 755 automation/ci/bootstrap_dev_env.sh
+          ./automation/ci/bootstrap_dev_env.sh $GITHUB_WORKSPACE ${{ secrets.GLCP_GH_TOKEN }} ${{ github.event_name }} ${{ github.ref_name }} ${{ github.event.pull_request.head.repo.full_name }} ${{ github.head_ref }}
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set resasonable dc defaults for golang-lib
+        id: defaults
+        run: |
+          echo "ut_dc_project_services=${UT_DC_PROJECT_SERVICES:-ccs-dev ccs-redis ccs-localstack}" >> $GITHUB_OUTPUT
+          echo "ut_dc_runexec_mode=${UT_DC_RUNEXEC_MODE:-exec}" >> $GITHUB_OUTPUT
+          echo "ut_dc_command=${UT_DC_COMMAND:-make test}" >> $GITHUB_OUTPUT
+
+      - name: BootStrap Dev Env
+        id: bootstrap
+        if: steps.dev-env-local.outcome == 'skipped'
+        uses: glcp/mci-actions-bootstrap-dev-env@v3.0.1
+        with:
+          gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+          app_name: ${{ env.APP_NAME }}
+          devenv_dir: ${{ env.DEV_ENV_DIR }}
+          devenv_tag: ${{ env.DEV_ENV_TAG }}
+          dc_project_name: ${{ env.DC_PROJECT_NAME }}
+          dc_project_services: ${{ steps.defaults.outputs.ut_dc_project_services }}
+          dc_mode: ${{ steps.defaults.outputs.ut_dc_runexec_mode }}
+          dc_command: ${{ steps.defaults.outputs.ut_dc_command }}
+          dc_service: ${{ env.UT_DC_SERVICE }}
+          dc_build: ${{ env.UT_DC_BUILD }}
+          dc_file: ${{ env.UT_DC_FILE }}
+          registry: quay.io
+          quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+          quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+          jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+          jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+
+      - name: Find coverage report
+        id: covreport
+        run: |
+          covreport=$(find . -name cover.out)
+          echo "Coverage report: $covreport"
+          echo "path=${covreport}" >> $GITHUB_OUTPUT
+          cp ${covreport} .
+
+      # from service-catalog-utils
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: unit_test_coverage_report
+          path: ${{ steps.covreport.outputs.path }}
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  golang:
+    if: |
+      !cancelled() && (needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success') &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      needs.getbuildsystem.outputs.output == 'golang'
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - name: Restore Workspace
+        id: workspace-restore
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - name: Checkout Code
+        if: steps.workspace-restore.outcome == 'skipped'
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Set resasonable dc defaults for golang-lib
+        id: defaults
+        run: |
+          echo "ut_dc_project_services=${UT_DC_PROJECT_SERVICES:-ccs-dev ccs-redis ccs-localstack}" >> $GITHUB_OUTPUT
+          echo "ut_dc_runexec_mode=${UT_DC_RUNEXEC_MODE:-exec}" >> $GITHUB_OUTPUT
+          echo "ut_dc_command=${UT_DC_COMMAND:-make test}" >> $GITHUB_OUTPUT
+
+      - name: BootStrap Dev Env
+        id: bootstrap-dev-env
+        if: env.BOOTSTRAP_DEV_ENV == 'true'
+        uses: glcp/mci-actions-bootstrap-dev-env@v3.0.1
+        with:
+          gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+          app_name: ${{ env.APP_NAME }}
+          devenv_dir: ${{ env.DEV_ENV_DIR }}
+          devenv_tag: ${{ env.DEV_ENV_TAG }}
+          dc_project_name: ${{ env.DC_PROJECT_NAME }}
+          dc_project_services: ${{ steps.defaults.outputs.ut_dc_project_services }}
+          dc_mode: ${{ steps.defaults.outputs.ut_dc_runexec_mode }}
+          dc_command: ${{ steps.defaults.outputs.ut_dc_command }}
+          dc_service: ${{ env.UT_DC_SERVICE }}
+          dc_build: ${{ env.UT_DC_BUILD }}
+          dc_file: ${{ env.UT_DC_FILE }}
+          registry: quay.io
+          quay_username: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER }}
+          quay_password: ${{ secrets.CCS_QUAY_CCSPORTAL_BUILDER_PASSWORD }}
+          jfrog_user: ${{ needs.get-mci-variables.outputs.JFROG_USERNAME }}
+          jfrog_passwd: ${{ needs.get-mci-variables.outputs.JFROG_PASSWORD }}
+
+      - name: Generate github app token
+        id: glcp-gh-token
+        uses: glcp/github-app-token-action@v1.7.0
+        with:
+          app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+          private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+      - name: Generate .netrc
+        shell: bash
+        run: |
+          echo "machine github.com" >> ~/.netrc
+          echo "login x-oauth-basic" >> ~/.netrc
+          echo "password ${{ steps.glcp-gh-token.outputs.token }}" >> ~/.netrc
+
+      - name: Run unit tests
+        if: steps.bootstrap-dev-env.outcome == 'skipped'
+        run: make test
+
+      - name: SonarQube Scan
+        # NOTE: if there's a future requirement to NOT run SonarQube for the "workflow_dispatch" event,
+        # then use this condition:
+        # if: |
+        #  github.event_name != 'workflow_dispatch' || vars.END_TO_END_WF == 'true'
+        #
+        # Modify condition as needed, but make sure that "|| vars.END_TO_END_WF == 'true'" is included
+        # to guarantee that when an end-to-end workflow execution is required, this step is always run
+        # on any event and any branch.
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  shell:
+    if: |
+      !cancelled() && ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      needs.getbuildsystem.outputs.output == 'shell'
+    needs: [getbuildsystem,get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+          
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Run unit tests
+        run: make test
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+
+  sbt:
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    if: | 
+      !cancelled() && ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' && 
+      needs.getbuildsystem.outputs.output == 'sbt'
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 
+        if: env.GRAAL_VM_JAVA_VERSION == '' && env.JAVA_VERSION != ''
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.DISTRIBUTION }}
+
+      - name: Set up GraalVM 
+        if: env.GRAAL_VM_JAVA_VERSION != ''
+        uses: glcp/setup-graalvm@v1
+        with:
+          java-version: ${{ env.GRAAL_VM_JAVA_VERSION }}
+          distribution: ${{ env.GRAAL_VM_DISTRIBUTION }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Setup env credentials
+        uses: glcp/harmony-actions-artifactory-credentials@master
+        with:
+          ARTIFACTORY_USER: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          ARTIFACTORY_PWD: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+
+      - name: Copy Credentials to right location
+        run: |
+          echo $HOME
+          set -e -x
+          mkdir -p $HOME/.ivy2/
+          cp "/home/runner/work/_temp/_github_home/.ivy2/.credentials-hpeartifacts.jfrog.io" \
+            "$HOME/.ivy2/.credentials-hpeartifacts.jfrog.io"
+          mkdir -p $HOME/.pip/
+          cp "/home/runner/work/_temp/_github_home/.pip/pip.conf" \
+            "$HOME/.pip/pip.conf"
+          cp "/home/runner/work/_temp/_github_home/.pypirc" \
+            "$HOME/.pypirc" 
+        shell: bash
+
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: sbt verify
+        env:
+          HPE_ARTIFACTORY_USERNAME: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          HPE_ARTIFACTORY_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+        run: sbt verify
+        shell: bash
+
+      - name: Override Coverage Source Path for Sonar
+        shell: bash
+        run: |
+          pwd
+          find . -name "scoverage.xml" -type f
+          find . -name "scoverage.xml" -type f -exec sed -i'' -e "s/\/home\/runner\/work\/${{ github.event.repository.name }}\/${{ github.event.repository.name }}/\/github\/workspace/g" '{}' \;
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: ${{ env.UNIT_TEST_WORKSPACE_BACKUP }}
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  onprem:
+    if: |
+      !cancelled() && 
+      (needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success') &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&      
+      needs.getbuildsystem.outputs.output == 'onprem'
+
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+
+  terraform:
+    if: |
+      !cancelled() && ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      needs.getbuildsystem.outputs.output == 'terraform'
+    needs: [getbuildsystem, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+          
+      - uses: glcp/mci-actions-registry-login@v2
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run unit tests
+        continue-on-error: true
+        run: make test
+
+      - name: checkov install
+        shell: bash
+        continue-on-error: true
+        run: |
+           echo "=================="
+           echo "Installing CHECKOV"
+           echo "=================="
+           pip install checkov
+           git branch -r
+           git checkout ${{ github.event.repository.default_branch }}
+           checkov -d ./ --create-baseline
+        
+
+      - name: checkov run
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_REF: ${{ github.event.pull_request.head.ref }} 
+        run: |
+           echo "Running checkov scan for terraform"
+           echo "======================================"
+           echo "CHECKOV version is `checkov --version`"
+           echo "======================================"
+           echo "================================================"
+           echo "running checkov scan on branch ${GITHUB_HEAD_REF##*/}"
+           echo "================================================"
+           pwd
+           git checkout ${GITHUB_HEAD_REF##*/}
+           checkov --version
+           echo running on branch ${GITHUB_HEAD_REF##*/}
+           checkov --directory ./ --baseline ./.checkov.baseline --output json > template.checkov-report.json 
+           cat template.checkov-report.json || echo -e "File template.checkov-report.json not found"
+         
+
+      - uses: glcp/mci-actions-backup-outputs@v1
+        if: always()
+        with:
+          file_path: template.checkov-report.json
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}    
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  javascript-default:
+    name: javascript/default
+    if: |
+      !cancelled() && 
+      ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      ( needs.getbuildsystem.outputs.output == 'javascript' || needs.getbuildsystem.outputs.output == 'javascript-image' ) &&
+      needs.get-mci-variables.outputs.unit_test_scripts == 'null'
+    needs: [getbuildsystem, get-mci-variables, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    env:
+       gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+       GLCP_ARTIFACTORY_TOKEN: ${{ secrets.GLCP_ARTIFACTORY_TOKEN }}
+       GLCP_NPM_READ: ${{ secrets.GLCP_NPM_READ }}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - uses: glcp/mci-actions-javascript-setup@v1
+        with:
+          cache-version: v1
+          package-manager: pnpm
+          pnpm-version: 8
+
+      - name: Unit Test (jest)
+        run: |
+             echo 
+             if [ "${{ env.JS_WORKING_DIR }}" == "" ]; then
+                echo ${{ needs.get-mci-variables.outputs.unit_test_scripts }}
+                pnpm install; pnpm test
+             else   
+                cd ${{ env.JS_WORKING_DIR }}; pnpm install; pnpm test
+             fi
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Merge in unit coverage
+        run: |
+            if test -f ${{ github.workspace }}/merged_all_cypress_lcov.info;then
+               lcov --zerocounters --directory .
+               merged_cypress_lcov="${{ github.workspace }}/merged_all_cypress_lcov.info"
+               merged_lcov="${{ github.workspace }}/merged_all_lcov.info"
+               lcov --add-tracefile "$merged_cypress_lcov" --add-tracefile ~/actions-runner/unit_coverage/lcov.info --output-file "$merged_lcov"
+            fi
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }}    
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+
+  javascript-custom:
+    name: javascript/custom
+    if: |
+      !cancelled() && 
+      (needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success') &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      (needs.getbuildsystem.outputs.output == 'javascript' || needs.getbuildsystem.outputs.output == 'javascript-image') &&
+      needs.get-mci-variables.outputs.unit_test_scripts != 'null'
+
+    strategy:
+      matrix: 
+        script: ${{fromJson(needs.get-mci-variables.outputs.unit_test_scripts)}}
+    needs: [getbuildsystem, get-mci-variables, get-docker-image-name, skip-checks]
+    runs-on: ubuntu-latest
+    env:
+       gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+       GLCP_ARTIFACTORY_TOKEN: ${{ secrets.GLCP_ARTIFACTORY_TOKEN }}
+       GLCP_NPM_READ: ${{ secrets.GLCP_NPM_READ }}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - uses: glcp/mci-actions-javascript-setup@v1
+        with:
+          cache-version: v1
+          package-manager: pnpm
+          pnpm-version: 8
+
+      - name: Unit Test (jest)
+        run: |
+             if [ "${{ env.JS_WORKING_DIR }}" == "" ]; then
+                echo ${{ matrix.script }}
+                echo ${{ needs.get-mci-variables.outputs.unit_test_scripts }}
+                pnpm install; pnpm ${{ matrix.script }}
+             else
+                echo ${{ matrix.script }}
+                echo ${{ needs.get-mci-variables.outputs.unit_test_scripts }}
+                cd ${{ env.JS_WORKING_DIR }}; pnpm install; pnpm ${{ matrix.script }}
+             fi
+
+      - name: set artifact names
+        shell: bash
+        run: |
+          echo "artifact-name=nyc-output-${{ matrix.script }}" | sed  's/:/-/' >> $GITHUB_ENV
+   
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact-name }}
+          path: .nyc_output
+
+      - uses: glcp/mci-actions-workspace-backup@v1
+        if: env.UNIT_TEST_WORKSPACE_BACKUP == 'true'
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+  javascript-custom-report:
+    name: javascript/custom-report
+    if: |
+      !cancelled() && 
+      ( needs.skip-checks.result == 'skipped' || needs.skip-checks.result == 'success' ) &&
+      needs.skip-checks.outputs.skip_checks != 'true' &&
+      ( needs.getbuildsystem.outputs.output == 'javascript' || needs.getbuildsystem.outputs.output == 'javascript-image' ) &&
+      needs.get-mci-variables.outputs.unit_test_scripts != 'null'
+    needs: [getbuildsystem, get-mci-variables, get-docker-image-name, skip-checks, javascript-custom]
+    runs-on: ubuntu-latest
+    env:
+       gh_token: ${{ secrets.GLCP_GH_TOKEN }}
+       GLCP_ARTIFACTORY_TOKEN: ${{ secrets.GLCP_ARTIFACTORY_TOKEN }}
+       GLCP_NPM_READ: ${{ secrets.GLCP_NPM_READ }}
+    steps:
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Restore Workspace
+        id: workspace-restore
+        uses: glcp/mci-actions-workspace-restore@v1
+        with:
+          artifact-name: workspace-test
+          zip-name: workspace-test.zip
+
+      - if: steps.workspace-restore.outcome == 'skipped'
+        name: Checkout Code
+        uses: actions/checkout@v3.3.0
+        with:
+          fetch-depth: 0
+
+      - uses: glcp/mci-actions-javascript-setup@v1
+        with:
+          cache-version: v1
+          package-manager: pnpm
+          pnpm-version: 8
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-test
+
+      - name: Download  coverage report
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nyc-output-*
+          path: .nyc_output
+          merge-multiple: true
+
+      - name: Generate coverage report
+        shell: bash
+        run: |
+          ./node_modules/.bin/nyc report --reporter=lcov
+
+      - if: env.UNIT_TEST_WORKSPACE_BACKUP =='true'
+        name: Merge in unit coverage
+        run: |
+            if test -f ${{ github.workspace }}/merged_all_cypress_lcov.info;then
+               npm install -g lcov
+               lcov --zerocounters --directory .
+               merged_cypress_lcov="${{ github.workspace }}/merged_all_cypress_lcov.info"
+               merged_lcov="${{ github.workspace }}/merged_all_lcov.info"
+               lcov --add-tracefile "$merged_cypress_lcov" --add-tracefile ~/actions-runner/unit_coverage/lcov.info --output-file "$merged_lcov"
+            fi
+
+      - name: SonarQube Scan
+        id: sonarqube-scan
+        uses: hpe-actions/sonarqube-scan@main
+        with:
+          sonar_token: ${{ secrets.SONARQUBE_PROJECT_TOKEN }} 
+
+  status-output:
+    needs: [python, maven, golang, shell, sbt, terraform, onprem, javascript-default, javascript-custom, javascript-custom-report]
+    runs-on: ubuntu-latest
+    if: always()
+    outputs:
+      unit-test: ${{ steps.setoutput.outputs.unit-test }}
+    steps:
+      - id: setoutput
+        run: |
+          for i in ${{ needs.python.result }} ${{ needs.maven.result }} ${{ needs.golang.result }} ${{ needs.shell.result }} ${{ needs.sbt.result }} ${{ needs.terraform.result }}  ${{ needs.onprem.result }}
+          do
+          if [ "$i" == success ]; then
+            echo "Unit Testing completed successfully for ${{ github.repository }}"
+            echo "unit-test=success" >> $GITHUB_OUTPUT
+          elif [ $i == failure ]; then
+            echo "Unit Testing failed for ${{ github.repository }}"
+            echo "unit-test=failure" >> $GITHUB_OUTPUT
+          elif [ $i == cancelled ]; then
+            echo "Unit Testing cancelled for ${{ github.repository }}"
+            echo "unit-test=cancelled" >> $GITHUB_OUTPUT
+          fi
+          done
+
+  # status-check:
+  #   needs: [python, maven, golang, shell, sbt, terraform]
+  #   runs-on: ubuntu-latest
+  #   if: always() && !failure() && !cancelled()
+  #   outputs:
+  #     success: ${{ steps.setoutput.outputs.success }}
+  #     unit-test: ${{ steps.setoutput.outputs.unit-test }}
+  #   steps:
+  #     - id: setoutput
+  #       run: |
+  #         echo "success=true" >> $GITHUB_OUTPUT
+
+  # unit-test-done:
+  #   if: always()
+  #   runs-on: ubuntu-latest
+  #   needs: status-check
+  #   steps:
+  #     - run: |
+  #         passed="${{ needs.status-check.outputs.success }}"
+  #         if [[ $passed == "true" ]]; then
+  #           echo "MCI UNIT TEST COMPLETED SUCCESSFULLY"
+  #           exit 0
+  #         else
+  #           echo "MCI UNIT TEST FAILED"
+  #           exit 1
+  #         fi

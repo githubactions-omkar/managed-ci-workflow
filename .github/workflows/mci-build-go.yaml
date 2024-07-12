@@ -1,0 +1,429 @@
+name: Managed CI Build
+
+on:
+  workflow_call:
+
+jobs:
+  getbuildsystem:
+   runs-on: ubuntu-latest
+   outputs:
+      output: ${{ steps.get_build_system.outputs.buildsystem }}
+   steps:
+        - uses: glcp/mci-actions-get-build-system@v1
+          id: get_build_system
+          with:
+            gh_token: ${{ secrets.GITHUB_TOKEN }}
+            vars_glcp_build_system: ${{ vars.GLCP_BUILD_SYSTEM }}
+            git_ref: ${{ github.ref }}
+  get-vars:
+    name: golang/get-vars
+    runs-on: ubuntu-latest
+    outputs:
+      app-name: ${{ steps.outvars.outputs.app-name }}
+      get-release-version: ${{ steps.outvars.outputs.get-release-version }}
+      push-to-jfrog: ${{ steps.outvars.outputs.push-to-jfrog }}
+      skip-coreupdate-push: ${{ steps.outvars.outputs.skip-coreupdate-push }}
+      skip-set-version-number: ${{ steps.outvars.outputs.skip-set-version-number }}
+      JFROG_USERNAME: ${{ steps.jfrog-creds.outputs.JFROG_USERNAME }}
+      JFROG_PASSWORD: ${{ steps.jfrog-creds.outputs.JFROG_PASSWORD }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+      - name: Set output variables
+        id: outvars
+        run: |
+          echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "push-to-jfrog=$PUSH_TO_JFROG" >> $GITHUB_OUTPUT
+          echo "get-release-version=$GET_EXTERNAL_RELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "skip-set-version-number=$SKIP_SET_VERSION_NUMBER" >> $GITHUB_OUTPUT
+          echo "skip-coreupdate-push=$SKIP_COREUPDATE_PUSH" >> $GITHUB_OUTPUT
+          
+      - name: Set JFrog Credentials
+        id: jfrog-creds
+        uses: glcp/mci-action-jfrog-credentials@v1.0.0
+        with:
+          JFROG_URL: $JFROG_URL
+          secrets: ${{ toJson(secrets) }}
+
+  create-tag:
+    name: golang/create-tag
+    needs: [getbuildsystem, get-vars]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ env.tag }}
+      release-tag: ${{ steps.release-tag.outputs.tag }}
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        use-artifact: false
+
+    - name: Set env var VERSION_NUMBER
+      if: needs.get-vars.outputs.skip-set-version-number != 'true'
+      uses: glcp/mci-actions-version-number@v1
+
+    - name: Create a custom TAG
+      if: |
+        (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch)) && needs.get-vars.outputs.skip-set-version-number != 'true' && (!startsWith(github.ref, 'refs/heads/hotfix'))
+      id: custom_tag
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" =~ "refs/tags/" ]]; then
+          export tag="${{ github.ref_name }}"
+        else
+          export tag="${{ env.VERSION }}.${VERSION_NUMBER}-dev"
+        fi
+        echo $tag
+        prefix=${tag%%-*}
+        suffix=${tag#"$prefix"}
+        if [[ $(grep -o "\." <<< "$prefix" | wc -l) -eq 1 ]]; then
+          prefix="${prefix}.0"
+        fi
+        new_tag="${prefix}${suffix}"
+        echo "Git Tag version: $new_tag"
+        echo "CustomTag=$new_tag" >> $GITHUB_OUTPUT
+        
+    - name: Create a HotfixTAG
+      if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref != format('refs/heads/{0}', github.event.repository.default_branch) ) && 
+          (startsWith(github.ref, 'refs/heads/hotfix'))
+      id: custom_hotfix_tag
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" =~ "refs/tags/" ]]; then
+          export tag="${{ github.ref_name }}"
+        else
+          export tag="${{ env.VERSION }}.${{ github.run_number }}"
+        fi
+        echo "Git Tag version: $tag"
+        echo "CustomHotfixTag=$tag" >> $GITHUB_OUTPUT
+
+    - name: Git Tag Push
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.CUSTOM_TAG != 'true'
+      run: |
+        export tag="${{ env.VERSION }}.${VERSION_NUMBER}"
+        echo "gittag=$tag" >> $GITHUB_OUTPUT
+      id: new_tag
+
+    - name: Updating tag if it is (x.y)
+      # FIXME: Don't push the tag for golang-lib until semantic versioning is fully adopted
+      if: github.event_name == 'push' && 
+          startsWith(github.ref, 'refs/heads/') && 
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && 
+          env.CUSTOM_TAG != 'true' && 
+          needs.getbuildsystem.outputs.output != 'golang-lib'
+      run: |
+        export VERSION="${{ steps.new_tag.outputs.gittag }}"
+        MAJOR=$(echo $VERSION | awk -F. '{print $1}') && echo "$MAJOR"
+        MINOR=$(echo $VERSION | awk -F. '{print $2}') && echo "$MINOR"
+        PATCH=$(echo $VERSION | awk -F. '{print $3}') && echo "$PATCH"
+        if [[ -z "${PATCH}" ]]; then
+          echo "Patch is null"
+          echo "Adding patch as '0'"
+          export PATCH=0
+          echo "final_tag=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+        else
+          echo "Patch is not equal to zero"
+          echo "final_tag=$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+        fi
+        export final_tag="${MAJOR}.${MINOR}.${PATCH}"
+        echo "Git Tag version: $final_tag"
+        git tag $final_tag
+        git push --tags
+      id: updated_tag
+
+    - name: Checking the tag created and creating an output
+      if: needs.get-vars.outputs.skip-set-version-number != 'true'
+      id: check_tag
+      run: |
+        if [[ -n "${{ steps.custom_tag.outputs.CustomTag }}"  ]]; then
+          echo "CustomTag defined (${{ steps.custom_tag.outputs.CustomTag }})"
+          echo "tag=${{ steps.custom_tag.outputs.CustomTag }}" >> $GITHUB_ENV
+        elif [[ -n "${{ steps.updated_tag.outputs.final_tag }}" ]]; then
+          echo "final_tag is definied (${{ steps.updated_tag.outputs.final_tag }})"
+          echo "tag=${{ steps.updated_tag.outputs.final_tag }}" >> $GITHUB_ENV
+        else
+          echo "NO TAG EXISTS"
+        fi
+
+    - name: Get external release version
+      if: needs.get-vars.outputs.get-release-version == 'true'
+      id: release-tag
+      shell: bash
+      run: |
+        version=$(curl -sL https://api.github.com/repos/$ORG_NAME/$APP_NAME/releases/latest | \
+                   jq -r ".tag_name")
+        echo "tag=$version" >> $GITHUB_OUTPUT
+        echo "tag=$version" 
+
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+
+  set-matrix-variables:
+    name: golang/set-matrix-variables
+    runs-on: ubuntu-latest
+    if: needs.create-tag.outputs.tag != '' || needs.create-tag.outputs.release-tag != ''
+    needs: create-tag
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - id: set-matrix
+        run: |
+          echo "matrix=$(yq -I=0 -o=json '{"include": .PRODUCTS}' .github/mci-variables.yaml)" >> $GITHUB_OUTPUT
+          echo "$(yq -I=0 -o=json '{"include": .PRODUCTS}' .github/mci-variables.yaml | jq)"
+
+  docker-build:
+    name: golang/docker-build
+    runs-on: ubuntu-latest
+    needs: [getbuildsystem, create-tag, set-matrix-variables, get-vars]
+    if: |
+      (startsWith(github.ref, 'refs/tags/') ||
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'push' ||
+       github.event.action == 'released') &&
+       needs.getbuildsystem.outputs.output == 'golang'
+    strategy:
+      matrix: ${{fromJson(needs.set-matrix-variables.outputs.matrix)}}
+    steps:
+    - name: Checkout Code for App Build
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-registry-login@v2
+      with:
+        secrets: ${{ toJson(secrets) }}
+
+    - name: Generate github app token
+      if: needs.get-vars.outputs.push-to-jfrog != 'true'
+      id: glcp-gh-token
+      uses: glcp/github-app-token-action@v1.7.0
+      with:
+        app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+        installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+        private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+    - name: Docker Build and Push to Quay
+      if: needs.get-vars.outputs.push-to-jfrog != 'true'
+      uses: glcp/mci-actions-docker-build-push@v1
+      with:
+        dockerfile_path: ${{ matrix.DOCKERFILE_PATH }}
+        image_registry: ${{ matrix.IMAGE_REGISTRY }}
+        tag: ${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+        target: ${{ matrix.TARGET }}
+        appname: ${{ env.APP_NAME }}
+        appid: ${{ env.APP_ID }}
+        registry: quay.io
+        build_type: ${{ matrix.BUILD_TYPE }}
+        gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+        base_image: ${{ matrix.base_image }}
+        docker_push: ${{ matrix.DOCKER_PUSH }}
+        secrets: ${{ toJSON(secrets) }}
+
+    - name: Set up QEMU
+      if: needs.get-vars.outputs.push-to-jfrog == 'true'
+      uses: docker/setup-qemu-action@v2
+
+    - name: Set up Docker Buildx
+      if: needs.get-vars.outputs.push-to-jfrog == 'true'
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build and push to HPE Artifactory
+      if: needs.get-vars.outputs.push-to-jfrog == 'true'
+      uses: docker/build-push-action@v4
+      with:
+        push: true
+        tags: ${{ matrix.IMAGE_REGISTRY }}/${{ needs.get-vars.outputs.app-name }}:${{ needs.create-tag.outputs.release-tag }}
+
+  sbom-variables:
+    name: golang/sbom-variables
+    needs: [docker-build, create-tag, set-matrix-variables]
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix: ${{fromJson(needs.set-matrix-variables.outputs.matrix)}}
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3.3.0
+
+    - uses: glcp/mci-actions-variables-restore@v2
+      with:
+        artifact-name: variables-build
+
+    - uses: glcp/mci-actions-registry-login@v2
+      with:
+        secrets: ${{ toJson(secrets) }}
+
+    - name: Set ARTIFACT_URLS with sha1s
+      run: |
+        if [ "$PUSH_TO_JFROG" == "true" ]; then
+          image=${{ matrix.IMAGE_REGISTRY }}/${{ matrix.APP_NAME }}:${{ needs.create-tag.outputs.release-tag }}
+        else
+          image=quay.io/ccsportal/${{ matrix.APP_NAME }}:${{ needs.create-tag.outputs.tag }}${{ matrix.TAG_EXTENSION }}
+        fi
+        docker pull $image
+        export product_name=${{ matrix.APP_NAME }}${{ matrix.TAG_EXTENSION }}
+        export artifact_url="$(docker inspect --format='{{index .RepoDigests 0}}' $image)"
+        yq -i '.SBOM += [{"PRODUCT_NAME": strenv(product_name), 
+                          "ARTIFACT_URL": strenv(artifact_url)}]' .github/mci-variables.yaml
+      shell: bash
+
+    - uses: glcp/mci-actions-variables-backup@v2
+      with:
+        artifact-name: variables-build
+
+  coreupdate_job:
+    if: needs.get-vars.outputs.skip-coreupdate-push != 'true' &&
+        needs.getbuildsystem.outputs.output == 'golang'
+    needs: [getbuildsystem, docker-build, create-tag]
+    runs-on: ccs-runner
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3.3.0
+
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - name: Channel
+        id: channel
+        shell: bash
+        run: |
+          CHANNEL=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then CHANNEL="${{env.CHANNEL}}"; fi
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then CHANNEL="Jenkins-Continuous"; fi
+          if [[ "${{ github.event.action }}" == "released" && "${{ startsWith(github.ref, 'refs/heads/hotfix') }}" == "true" ]]; then CHANNEL="GLCP-HF"; fi
+          if [[ "${{ github.event.action }}" == "released" ]]; then CHANNEL="Jenkins-Continuous"; fi
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "Channel: $CHANNEL"
+
+      - name: Coreupdate Push
+        uses: glcp/mci-actions-coreupdate@v1.0
+        env:
+          jfrog_username: ${{ needs.get-vars.outputs.JFROG_USERNAME }}
+          jfrog_password: ${{ needs.get-vars.outputs.JFROG_PASSWORD }}
+        with:
+          appname: ${{ github.event.repository.name }}
+          appid: ${{ env.APP_ID }}
+          tag: ${{ needs.create-tag.outputs.tag }}
+          image_registry: "quay.io/ccsportal/${{ env.APP_NAME }}"
+          app_image: "quay.io/ccsportal/${{ env.APP_NAME }}:${{ needs.create-tag.outputs.tag }}"
+          channel: ${{ steps.channel.outputs.channel }}
+          UPDATECTL_USER: ${{ secrets.CCS_UPDATECTL_USER }}
+          UPDATECTL_SERVER: ${{ secrets.CCS_UPDATECTL_SERVER }}
+          UPDATECTL_KEY: ${{ secrets.CCS_UPDATECTL_KEY }}
+          COREROLLER_USER: ${{ secrets.CCS_COREROLLER_USER }}
+          COREROLLER_SERVER: ${{ secrets.CCS_COREROLLER_SERVER }}
+          COREROLLER_KEY: ${{ secrets.CCS_COREROLLER_KEY }}
+
+
+  jira_update:
+    needs: [docker-build, create-tag, coreupdate_job]
+    runs-on: ubuntu-latest
+    name:  golang/jira-update
+    # if: push to default or release created
+    if: (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+        github.event.action == 'released'
+    steps:
+    - name: Generate github app token
+      id: glcp-gh-token
+      uses: glcp/github-app-token-action@v1.7.0
+      with:
+        app_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_APP_ID }}
+        installation_id: ${{ vars.MANAGED_CI_WORKFLOW_READ_ONLY_INST_ID }}
+        private_key: ${{ secrets.MANAGED_CI_WORKFLOW_READ_ONLY_PRIVATE_KEY }}
+
+    - name: Update Jira
+      uses: glcp/mci-actions-jira-update@v1.0
+      with:
+        pull_request_title: ${{ join(github.event.commits.*.message, ', ') }}
+        build_tag: ${{ needs.create-tag.outputs.tag }}
+        jira_user: ${{ secrets.CCS_JIRA_USER }}
+        jira_apikey: ${{ secrets.CCS_JIRA_APIKEY }}
+        gh_token: ${{ steps.glcp-gh-token.outputs.token }}
+
+  generate-deb-tracing-proxy:
+    name: golang/generate-deb
+    # This job will NOT be applicable for other external repos.  Other external repos will have
+    # different jobs/steps/commands, so it's better to compare against a specific repo name
+    # (instead of some other condition)
+    if: needs.get-vars.outputs.app-name == 'tracing-proxy'
+    needs: [create-tag, get-vars]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v3
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+      - uses: glcp/docker-run-action@v3
+        with:
+          image: golang:${{ env.GO_VERSION }}-bullseye
+          options: -v ${{ github.workspace }}:${{ github.workspace }} --env IS_GITHUB_ACTION=true --env VERSION_TAG=${{ needs.create-tag.outputs.release-tag }}
+          run: |
+            cd ${{ github.workspace }}
+            /bin/bash build/vm/tracing-deb/script.sh
+      - name: Download Jfrog CLI
+        uses: jfrog/setup-jfrog-cli@v3
+        env:
+          JF_URL: ${{ env.JFROG_URL }}
+          JF_USER: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          JF_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+      - name: Upload Debian package to HPE Artifactory
+        run: |
+          ls -l build/vm/tracing-deb/output
+          cd build/vm/tracing-deb/output/
+          jf rt u * glcp-debian/${{ needs.create-tag.outputs.release-tag }}/
+
+  generate-rpm-tracing-proxy:
+    name: golang/generate-rpm
+    # This job will NOT be applicable for other external repos.  Other external repos will have
+    # different jobs/steps/commands, so it's better to compare against a specific repo name
+    # (instead of some other condition)
+    if: needs.get-vars.outputs.app-name == 'tracing-proxy'
+    needs: [create-tag, get-vars]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v3
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          use-artifact: false
+      - uses: glcp/docker-run-action@v3
+        with:
+          image: centos:6
+          options: -v ${{ github.workspace }}:${{ github.workspace }} --env IS_GITHUB_ACTION=true --env VERSION_TAG=${{ needs.create-tag.outputs.release-tag }}
+          run: |
+            # change the mirrors to vault mirros since CentOS-6 has reached EOL
+            sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+            sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+
+            # manually download and install golang
+            curl -L -O https://go.dev/dl/go1.21.1.linux-amd64.tar.gz
+            rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.1.linux-amd64.tar.gz
+
+            # setup env and build the rpm package
+            cd ${{ github.workspace }}
+            PATH=$PATH:/usr/local/go/bin /bin/bash build/vm/tracing-rpm/script.sh
+            mkdir -p ${{ github.workspace }}/output
+            cp -r /root/rpmbuild/RPMS/x86_64/* ${{ github.workspace }}/output
+      - name: Download Jfrog CLI
+        uses: jfrog/setup-jfrog-cli@v3
+        env:
+          JF_URL: ${{ env.JFROG_URL }}
+          JF_USER: ${{ secrets.HPE_ARTIFACTORY_BBOB_USERNAME }}
+          JF_PASSWORD: ${{ secrets.HPE_ARTIFACTORY_BBOB_API_KEY }}
+      - name: Upload RPM package to HPE Artifactory
+        run: |
+          cd output
+          ls -l
+          jf rt u * glcp-rpm/${{ needs.create-tag.outputs.release-tag }}/
+

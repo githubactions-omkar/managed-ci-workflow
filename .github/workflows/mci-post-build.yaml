@@ -1,0 +1,176 @@
+name: MCI POST BUILD
+
+on:
+  workflow_call:
+
+jobs:
+  set-matrix-variables:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event.action == 'released'
+    outputs:
+      ENABLE_SBOM_UPLOAD: ${{ steps.search-app.outputs.ENABLE_SBOM_UPLOAD }}
+      ENABLE_FS_SBOM_UPLOAD: ${{ steps.search-app.outputs.ENABLE_FS_SBOM_UPLOAD }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}    
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+
+      - id: set-matrix
+        run: |
+          echo "matrix=$(cat .github/mci-variables.yaml | yq '.SBOM' | yq  -I=0 -o=json '{"include": unique_by(.PRODUCT_NAME)}')" >> $GITHUB_OUTPUT
+
+      - name: Checkout managed-ci utils
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GLCP_GH_TOKEN }}
+          repository: glcp/managed-ci-workflow
+          sparse-checkout: |
+                utils
+          sparse-checkout-cone-mode: false
+
+      - name: Search for app name in config
+        id: search-app
+        shell: bash
+        run: |
+          export PYTHONWARNINGS="ignore:Unverified HTTPS request"
+          read var1 var2 < <(python utils/search-app.py -a ${{ env.APP_NAME }} -f utils/vtn-config.yaml -fs)
+          echo "ENABLE_SBOM_UPLOAD=$var1" >>$GITHUB_OUTPUT
+          echo "ENABLE_FS_SBOM_UPLOAD=$var2" >>$GITHUB_OUTPUT
+
+
+  sbom-image-generate:
+    name: sbom-image/sbom-generate
+    permissions:
+      id-token: write
+      contents: read   
+    runs-on: ubuntu-latest
+    needs: set-matrix-variables
+    continue-on-error: true   
+    if: (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event.action == 'released') &&
+        needs.set-matrix-variables.outputs.matrix != '' &&
+        needs.set-matrix-variables.outputs.matrix != '[]'
+    strategy:
+      matrix: ${{fromJson(needs.set-matrix-variables.outputs.matrix)}}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+  
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: image SIGN SBOM attest Verify and upload
+        if: matrix.ARTIFACT_URL != '' && matrix.PRODUCT_NAME != ''
+        id: generate-sbom
+        uses: glcp/mci-actions-sbom-generate@v1
+        with:         
+          ARTIFACT_URL: ${{ matrix.ARTIFACT_URL }}
+          ENABLE_SBOM_UPLOAD: ${{ needs.set-matrix-variables.outputs.ENABLE_SBOM_UPLOAD }}
+
+      - name: sbom output
+        shell: bash
+        run: |
+          mv sbom-artifacts/*.json sbom-artifacts/${{ matrix.PRODUCT_NAME }}.json
+
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifacts-${{ matrix.PRODUCT_NAME }}
+          path: sbom-artifacts
+
+  sbom-image-upload:
+    name: sbom-image/sbom-upload
+    needs: [ set-matrix-variables, sbom-image-generate ]    
+    runs-on: managed-ci-vtn
+    continue-on-error: true   
+    if: (needs.sbom-image-generate.result == 'success') && !cancelled() &&
+        (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event.action == 'released') &&
+        needs.set-matrix-variables.outputs.matrix != '' &&
+        needs.set-matrix-variables.outputs.matrix != '[]'
+    strategy:
+      matrix: ${{fromJson(needs.set-matrix-variables.outputs.matrix)}}
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+  
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom-artifacts-${{ matrix.PRODUCT_NAME }}
+          path: sbom-artifacts
+
+      - name: image SIGN SBOM attest Verify and upload
+        if: matrix.ARTIFACT_URL != '' && matrix.PRODUCT_NAME != ''
+        id: upload-sbom
+        uses: glcp/mci-actions-sbom-upload@v1.2.0
+        with:         
+          APP_NAME: ${{ env.APP_NAME }}
+          PRODUCT_NAME: ${{ matrix.PRODUCT_NAME }}
+          ARTIFACT_URL: ${{ matrix.ARTIFACT_URL }}
+          ENABLE_SBOM_UPLOAD: ${{ needs.set-matrix-variables.outputs.ENABLE_SBOM_UPLOAD }}
+          VTN_USER: ${{ vars.MCI_VTN_USER }}
+          VTN_PASSWORD: ${{ secrets.MCI_VTN_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+
+  sbom-fs:
+    permissions:
+      id-token: write
+      contents: read   
+    runs-on: managed-ci-vtn
+    needs: set-matrix-variables
+    continue-on-error: true   
+    if: (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event.action == 'released') &&
+        needs.set-matrix-variables.outputs.ENABLE_FS_SBOM_UPLOAD == 'true'
+    steps:
+      - uses: glcp/mci-actions-variables-restore@v2
+        with:
+          artifact-name: variables-build
+  
+      - uses: glcp/mci-actions-registry-login@v1
+        with:
+          secrets: ${{ toJson(secrets) }}
+
+      - name: FS SBOM generate and upload
+        id: upload-fs-sbom
+        uses: glcp/mci-actions-sbom-upload@v1.2.0
+        with:
+          APP_NAME: ${{ env.APP_NAME }}
+          PRODUCT_NAME: fs
+          ENABLE_FS_SBOM_UPLOAD: ${{ needs.set-matrix-variables.outputs.ENABLE_FS_SBOM_UPLOAD }}
+          VTN_USER: ${{ vars.MCI_VTN_USER }}
+          VTN_PASSWORD: ${{ secrets.MCI_VTN_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GLCP_GH_TOKEN }}
+          
+
+  status-check:
+    needs: [ sbom-image-generate, sbom-image-upload, sbom-fs ]
+    runs-on: ubuntu-latest
+    if: |
+      ${{ always() && !cancelled() && (contains(join(needs.*.result, ','), 'success') || contains(join(needs.*.result, ','), 'skipped')) }}
+    outputs:
+      success: ${{ steps.setoutput.outputs.success }}
+    steps:
+      - id: setoutput
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+  post-build-done:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: status-check
+    steps:
+      - run: |
+          passed="${{ needs.status-check.outputs.success }}"
+          if [[ $passed == "true" ]]; then
+            echo "MCI POST BUILD COMPLETED SUCCESSFULLY"
+            exit 0
+          else
+            echo "MCI POST BUILD FAILED"
+            exit 1
+          fi
