@@ -19,3 +19,12 @@ custom_branch_workflows:
   - managed-ci-merge.yaml
 cron_workflows:
   - managed-ci-schedule.yaml
+python:
+  - managed-ci-python.yaml
+  - managed-ci-python1.yaml
+golang:
+  - managed-ci-golang.yaml
+  - managed-ci-golang1.yaml
+maven:
+  - managed-ci-maven.yaml
+  - managed-ci-maven1.yaml
