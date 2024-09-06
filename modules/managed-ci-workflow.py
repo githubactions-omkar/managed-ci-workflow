@@ -22,7 +22,7 @@ import json
 
 api_url = 'https://api.github.com/graphql'
 github_token = os.environ['GITHUB_APP_TOKEN']
-organisation = 'glcp'
+organisation = 'Omkarprakashchavan'
 repositories = []
 headers = {
     'Authorization': f'Bearer {github_token}',
@@ -37,7 +37,7 @@ file_name_pattern='managed-ci'
 
 def main(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     if not 'ORG_NAME' in os.environ:
-        org_name='glcp'
+        org_name='Omkarprakashchavan'
     else:
         org_name=os.environ['ORG_NAME']
     global managed_ci_workflow_repo
