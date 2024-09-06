@@ -46,6 +46,7 @@ jobs:
 
           # git config --global user.email "glcp-giotto@hpe.com"
           # git config --global user.name "Automation"
+          GITHUB_APP_TOKEN=${{ secrets.GITHUB_TOKEN }}
 
           # echo ${{ steps.glcp-gh-token.outputs.token }}
           python main.py
