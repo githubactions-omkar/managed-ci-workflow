@@ -67,6 +67,11 @@ def main(module_name='', module_description='', repositories=[], default_managed
             raise Exception(f"Repository {r} not found in {org_name} organization")
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
+        build_system = repo.get('build_system', [])
+        # if build_system:
+        #     ## V2 development by Omkar
+        #     build_system_workflow_path = f'managed_ci_workflow_repo/workflows/{build_system}'
+        #     build_system_workflows = os.listdir(build_system_workflow_path)
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
@@ -87,7 +92,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
 
-        primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows = workflow_manifest(workflow_manifest_file)
+        primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
 
         workflow_sources=[]
         workflow_exists=[]
@@ -145,8 +150,30 @@ def main(module_name='', module_description='', repositories=[], default_managed
                 else:
                     workflow_exists.append(f'{primary_workflow_path}/{pwf}')
                     logger.debug(f'md5sum of master repo and user repo {r} workflow {pwf} is the same.  skipping deployment.')
+        for bswf in build_system_workflows:
+            source = f'{primary_workflow_path}/{build_system}'
+            dest = get_dest_workflow_path(r, bswf)
+            logger.debug(f'comparing {build_system} Build System workflow {source} vs. {dest}')
+            if not gh_obj.check_workflow_file(r, bswf):
+                # File does not exist, exists at 0 bytes, or other exception
+                logger.debug(f'workflow {bswf} does not exist in {r}')
+                workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+            else:
+                logger.info(f'{build_system} Build System workflow file {bswf} exists for repo {r}')
+                if bswf in custom_branch_workflows:
+                    custom_branch_update(bswf, r)
+                source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/{build_system}/{bswf}')
+                dest_md5sum = calc_template_md5sum(dest)
+                logger.debug(f'md5sum of source Build System workflow file {source_md5sum}')
+                logger.debug(f'md5sum of user repo {r} Build System workflow file {dest_md5sum}')
+                if not source_md5sum == dest_md5sum:
+                    workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+                    logger.debug(f'need to deploy source Build System workflow file to repo "{r}"')
+                else:
+                    workflow_exists.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+                    logger.debug(f'md5sum of master repo and user repo {r} workflow {bswf} is the same.  skipping deployment.')
         # print(workflow_sources            
-        wf_cleanup(primary_workflows=primary_workflows, template_workflows=template_workflows, optional_workflows=optional_workflows, repo_name=r)
+        wf_cleanup(primary_workflows=primary_workflows, template_workflows=template_workflows, optional_workflows=optional_workflows, build_system_workflows=build_system_workflows, repo_name=r)
         git_push_workflows(r, workflow_sources, app_token)
 
         # Add to the dict of new deployments for the report
@@ -205,10 +232,10 @@ def repository_statuscheck_secrets(repositories):
         except Exception as e:
             logger.debug(f'Error while updating specific secrets {spl_secrets} on {repo_name}: {str(e)}')
 
-def workflow_manifest(manifest_file):
+def workflow_manifest(manifest_file, build_system):
     with open(manifest_file, "r") as f:
         data = yaml.safe_load(f)
-    return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', [])
+    return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
 
 
 def custom_branch_update(custom_branch_workflow: str, repo_name: str):
@@ -247,14 +274,14 @@ def cron_wf_revert(cron_workflow: str, repo_name: str):
     if ec:
         sys.exit(1) 
         
-def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[], repo_name=''):
+def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[], build_system_workflows=[], repo_name=''):
      # This function will remove the files from the remote repo if the files are not mentioned 
     # in the manifest file  and the file names start with file name pattern 'managed-ci'.
     workflow_dir=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows'
     if not os.path.exists(workflow_dir):
         os.makedirs(workflow_dir)
     wf_files_in_user_repo = [f for f in listdir(workflow_dir) if isfile(join(workflow_dir, f))]
-    wf_names=primary_workflows + template_workflows + optional_workflows
+    wf_names=primary_workflows + template_workflows + optional_workflows + build_system_workflows
     wf_files_to_be_deleted=[]
     for i in wf_files_in_user_repo:
         if i in wf_names:
@@ -487,12 +514,13 @@ def update_log_file(new_deploys, old_deploys, report_filename=f'devops-reports/w
 def get_config(item='', data_type=any):
     '''This function checks if requested item exists in deployer-config.yaml or not'''
     # Read the YAML configuration file
-    with open("deployer-config.yaml", "r") as config_file:
+    with open("../deployer-config.yaml", "r") as config_file:
         config = yaml.safe_load(config_file)
     try:
         item = config[item]
     except KeyError:
-        logger.debug(f'{item} is not available in deployer-config.yaml')
+        # logger.debug(f'{item} is not available in deployer-config.yaml')
+        print(f'{item} is not available in deployer-config.yaml')
         item = data_type
     return item
 
@@ -607,6 +635,10 @@ def check_if_branch_protected(repository, repository_id, default_branch, refspec
         response_data = json.loads(response.text)
         protected_branches = [rule["pattern"] for rule in response_data["data"]["repository"]["branchProtectionRules"]["nodes"]]
         if default_branch not in protected_branches:
+            try:
+                protected_status_check_context = data[0].get('requiredStatusCheckContexts')
+            except:
+                protected_status_check_context = []
             updated_status_check_context = evaluate_context_for_bpr(refspec, repository, protected_status_check_context)
             branch_protection_rule(repository, default_branch, updated_status_check_context)
         else:
@@ -722,6 +754,7 @@ def branch_protection_rule(repository, default_branch, updated_status_check_cont
     add_missing_keys(cleaned_payload, required_keys)
     response = requests.put(url, headers=headers, json=cleaned_payload)
     response.raise_for_status()
+    print(response.json)
     if response.status_code == 200:
         logger.info(f'Branch protection rule created successfully for {repository} on default branch {default_branch}.')
     else:
@@ -729,13 +762,24 @@ def branch_protection_rule(repository, default_branch, updated_status_check_cont
 
 def evaluate_context_for_bpr(refspec, repository, protected_status_check_context):
     """This function evaluates the CONTEXT for branch protection rule and returns the context and language"""
-    default_tag_status_context = get_config(item='default_tag_status_context', data_type=[])
+    default_tag_status_context = get_config(item='default_tag_status_context', data_type={})
+    delete_status_checks = get_config(item='delete_status_checks', data_type=[])
+    default_tag_status_context_list = [value[0] for value in default_tag_status_context.values()]
+    delete_status_checks = list(set(delete_status_checks + default_tag_status_context_list))
+    protected_status_check_list = [item for item in protected_status_check_context if item not in delete_status_checks]
+    # for tags in default_tag_status_context.values():
+    #     protected_status_check_list.extend(tags)
     tag_status_context = []
+    default_tag_status_values = list(default_tag_status_context.values()) + [list(protected_status_check_context)]
     if len(default_tag_status_context) > 0 and refspec:
         for key in default_tag_status_context.keys():
             if refspec.startswith(key):
                 tag_status_context = default_tag_status_context[key]
-                break
+                if refspec == key:
+                    tag_status_context = default_tag_status_context[key]
+                    break
+    
+    filtered_list = [sublist for sublist in default_tag_status_values if sublist[0] == tag_status_context]
 
     # Get lanaguage variable value for this repository
     try:
@@ -748,10 +792,19 @@ def evaluate_context_for_bpr(refspec, repository, protected_status_check_context
             language_context = default_language_context[language]
         else:
             logger.info(f"{lang_variable} status check context not found in deployer-config.yaml")
+            print(f"{lang_variable} status check context not found in deployer-config.yaml")
             language_context = []
     except requests.exceptions.RequestException:
         logger.debug(f'{lang_variable} repository variable not found in {repository}.')
+        print(f'{lang_variable} repository variable not found in {repository}.')
         language_context = []
     required_status_check_contexts = get_config(item='required_status_check_contexts', data_type=[])
-    join_status_context = list(set(protected_status_check_context + required_status_check_contexts + tag_status_context + language_context))
+    join_status_context = list(set(protected_status_check_list + required_status_check_contexts + tag_status_context + language_context))
+    # return join_status_context
+    print(f'required_status_check_contexts {required_status_check_contexts}')
+    print(f'protected_status_check_list {protected_status_check_list}')
+    print(f'tag_status_context {tag_status_context}')
+    print(f'language_context {language_context}')
+    print(f'join_status_context {join_status_context}')
     return join_status_context
+    
