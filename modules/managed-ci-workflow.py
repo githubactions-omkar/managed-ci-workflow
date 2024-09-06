@@ -55,9 +55,9 @@ def main(module_name='', module_description='', repositories=[], default_managed
 
     logger.debug(f'Final list of Repos in the glcp org')
 
-    sq_data: Dict[str, List[Dict[str,str]]] = \
-       sonarqube_config(org_name=org_name)
-    num_sq_projects = len(sq_data['Projects'])
+    # sq_data: Dict[str, List[Dict[str,str]]] = \
+    #    sonarqube_config(org_name=org_name)
+    # num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
     old_deploys={}
@@ -185,12 +185,12 @@ def main(module_name='', module_description='', repositories=[], default_managed
         new_deploys[r]['refspec'] = refspec
         new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
 
-        sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+        # sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
-    if len(sq_data['Projects']) > num_sq_projects:
-        sonarqube_config(sq_data, save=True)
-    else:
-        logger.debug('nothing to push... all repos are present in the SonarQube config file')
+    # if len(sq_data['Projects']) > num_sq_projects:
+    #     sonarqube_config(sq_data, save=True)
+    # else:
+    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
     repository_statuscheck_secrets(repositories)
     update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
@@ -399,69 +399,69 @@ def git_push_workflows(repo_name: str, workflow_sources: List, token):
         if ec:
             sys.exit(1)
 
-def sonarqube_config(data=None, repo_name=None, default_branch_name=None,
-                     org_name=None, save=False) -> Union[Dict[str, List[Dict[str,str]]], None]:
-    """
-    This function operates in 3 modes:
-      1. Retrieve the existing SonarQube config from the "devx-sonarqube" repo
-          if the "data" param is None
-      2. Write the updated SonarQube config changes ("data" param) back to the
-          SonarQube config YAML file and push the changes if the "save" param is True.
-      3. Update the SonarQube config data struct ("data" param) if the repo
-          name and default branch name are provided
-    """
+# def sonarqube_config(data=None, repo_name=None, default_branch_name=None,
+#                      org_name=None, save=False) -> Union[Dict[str, List[Dict[str,str]]], None]:
+#     """
+#     This function operates in 3 modes:
+#       1. Retrieve the existing SonarQube config from the "devx-sonarqube" repo
+#           if the "data" param is None
+#       2. Write the updated SonarQube config changes ("data" param) back to the
+#           SonarQube config YAML file and push the changes if the "save" param is True.
+#       3. Update the SonarQube config data struct ("data" param) if the repo
+#           name and default branch name are provided
+#     """
 
-    sq_repo_name = 'devx-sonarqube'
-    filename = os.environ.get('SQ_CONFIG_FILENAME', 'sonar.yaml')
-    yaml_filename = f'{sq_repo_name}/sonarqube-management/sonar_data/{filename}'
-    yaml = YAML()
+#     sq_repo_name = 'devx-sonarqube'
+#     filename = os.environ.get('SQ_CONFIG_FILENAME', 'sonar.yaml')
+#     yaml_filename = f'{sq_repo_name}/sonarqube-management/sonar_data/{filename}'
+#     yaml = YAML()
 
-    if not data:
-        git_clone(org_name, sq_repo_name, os.environ["GITHUB_APP_TOKEN"],
-                  refspec=os.environ.get('SQ_BRANCH_NAME', None))
-        with open(yaml_filename, 'rb') as fh:
-            data = yaml.load(fh)
-        return data
+#     if not data:
+#         git_clone(org_name, sq_repo_name, os.environ["GITHUB_APP_TOKEN"],
+#                   refspec=os.environ.get('SQ_BRANCH_NAME', None))
+#         with open(yaml_filename, 'rb') as fh:
+#             data = yaml.load(fh)
+#         return data
 
-    if save:
-        logger.debug(f'updating SonarQube config file "{yaml_filename}" ...')
-        yaml.indent(mapping=2, sequence=4, offset=2)
-        with open(f'{yaml_filename}', 'wb') as fh:
-            yaml.dump(data, fh)
-        git_push_sonarqube_config(yaml_filename, sq_repo_name)
-        # the GitHub Action that invoked this Python script will check for the
-        # existence of this file.  If this file exists, then the
-        # workflow "sonar.yaml" in the "devx-sonarqube" GitHub repo will be invoked
-        logger.debug(f'creating "need-sq-onboarding.txt" ...')
-        with open('need-sq-onboarding.txt', 'w') as fh:
-            fh.write('yes please')
-        return
+#     if save:
+#         logger.debug(f'updating SonarQube config file "{yaml_filename}" ...')
+#         yaml.indent(mapping=2, sequence=4, offset=2)
+#         with open(f'{yaml_filename}', 'wb') as fh:
+#             yaml.dump(data, fh)
+#         git_push_sonarqube_config(yaml_filename, sq_repo_name)
+#         # the GitHub Action that invoked this Python script will check for the
+#         # existence of this file.  If this file exists, then the
+#         # workflow "sonar.yaml" in the "devx-sonarqube" GitHub repo will be invoked
+#         logger.debug(f'creating "need-sq-onboarding.txt" ...')
+#         with open('need-sq-onboarding.txt', 'w') as fh:
+#             fh.write('yes please')
+#         return
 
-    projects: List[Dict[str, str]] = data['Projects']
-    if not any(d['name'] == repo_name for d in projects):
-        logger.debug(f'repo "{repo_name}" not found in SonarQube config; adding it...')
-        projects.append({'name': repo_name,
-                         'branch': default_branch_name,
-                         'qualitygate': 'glcp-sonarqube'})
-    else:
-        logger.debug(f'repo "{repo_name}" found in SonarQube config; nothing to do...')
+#     projects: List[Dict[str, str]] = data['Projects']
+#     if not any(d['name'] == repo_name for d in projects):
+#         logger.debug(f'repo "{repo_name}" not found in SonarQube config; adding it...')
+#         projects.append({'name': repo_name,
+#                          'branch': default_branch_name,
+#                          'qualitygate': 'glcp-sonarqube'})
+#     else:
+#         logger.debug(f'repo "{repo_name}" found in SonarQube config; nothing to do...')
 
-def git_push_sonarqube_config(yaml_filename: str, repo_name: str) -> None:
-    """
-    Push the updated SonarQube config changes to the "devx-sonarqube" repo
-    """
+# def git_push_sonarqube_config(yaml_filename: str, repo_name: str) -> None:
+#     """
+#     Push the updated SonarQube config changes to the "devx-sonarqube" repo
+#     """
 
-    yaml_path = yaml_filename.rsplit('/', 1)[0]
-    filename = yaml_filename.rsplit('/', 1)[1]
+#     yaml_path = yaml_filename.rsplit('/', 1)[0]
+#     filename = yaml_filename.rsplit('/', 1)[1]
 
-    cmds = [
-            (f'cd {yaml_path}; '
-             f'git commit -m "[skip actions] Onboarding repo(s)" {filename}'
-            ),
-            f'cd {repo_name}; git push'
-           ]
-    for cmd in cmds:
-        run_subprocess(cmd, abort_on_error=True)
+#     cmds = [
+#             (f'cd {yaml_path}; '
+#              f'git commit -m "[skip actions] Onboarding repo(s)" {filename}'
+#             ),
+#             f'cd {repo_name}; git push'
+#            ]
+#     for cmd in cmds:
+#         run_subprocess(cmd, abort_on_error=True)
 
 def update_log_file(new_deploys, old_deploys, report_filename=f'devops-reports/workflow-reports/workflows-deployed.yaml'):
     mkdir_p(os.path.dirname(report_filename))
