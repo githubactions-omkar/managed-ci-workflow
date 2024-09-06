@@ -19,12 +19,12 @@ jobs:
       #     app_id: ${{ secrets.ORG_POLICY_GITHUB_APP_ID }}
       #     installation_id: ${{ secrets.ORG_POLICY_GITHUB_APP_INSTALL_ID }}
       #     private_key: ${{ secrets.ORG_POLICY_GITHUB_APP_PRIVATE_KEY }}
-      # - name: Use github token as Env variable
-      #   env:
-      #     GITHUB_APP_TOKEN: ${{ steps.glcp-gh-token.outputs.token }}
-      #   run: |
-      #     echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
-      #   shell: bash
+      - name: Use github token as Env variable
+        env:
+          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "GITHUB_APP_TOKEN=$GITHUB_APP_TOKEN" >> $GITHUB_ENV
+        shell: bash
       - name: Install Python modules
         run: |
           pip3 install ruamel.yaml
