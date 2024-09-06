@@ -100,21 +100,21 @@ jobs:
   #       shell: bash
   # generate_metrics:
   #   runs-on: ubuntu-latest
-    needs: [deploy]
-    if: always()
-    steps:
-      - name: Run Custom Action
-        uses: glcp/mci-actions-export-metrics@v1.0
-        with:
-          githubToken: ${{secrets.GLCP_GH_TOKEN}}
-          collect_workflow_run_metrics: true
-          collect_job_metrics: false
-          collect_step_metrics: false
-          clientId: ${{ vars.METRIC_CLIENT_ID }}
-          clientSecret: ${{ secrets.METRIC_CLIENT_SECRET }}
-          issuerUrl: ${{ vars.METRIC_ISSUER_URL }}
-          endpoint: ${{ vars.METRIC_ENDPOINT }}
-          #optional inputs
-          prefer_distribution_workflow_run_metrics: false
-          prefer_distribution_job_metrics: false
-          prefer_distribution_step_metrics: false
+  #   needs: [deploy]
+  #   if: always()
+  #   steps:
+  #     - name: Run Custom Action
+  #       uses: glcp/mci-actions-export-metrics@v1.0
+  #       with:
+  #         githubToken: ${{secrets.GLCP_GH_TOKEN}}
+  #         collect_workflow_run_metrics: true
+  #         collect_job_metrics: false
+  #         collect_step_metrics: false
+  #         clientId: ${{ vars.METRIC_CLIENT_ID }}
+  #         clientSecret: ${{ secrets.METRIC_CLIENT_SECRET }}
+  #         issuerUrl: ${{ vars.METRIC_ISSUER_URL }}
+  #         endpoint: ${{ vars.METRIC_ENDPOINT }}
+  #         #optional inputs
+  #         prefer_distribution_workflow_run_metrics: false
+  #         prefer_distribution_job_metrics: false
+  #         prefer_distribution_step_metrics: false
