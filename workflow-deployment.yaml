@@ -10,10 +10,10 @@ modules:
         optional_workflows:
           - managed-ci-pr-ft.yaml
         build_system: python
-      # - name: managed-ci-workflow-test-golang
-      #   refspec: v1.6.0
-      # - name: managed-ci-workflow-test-scala
-      #   refspec: v1.6.0
+      - name: managed-ci-workflow-test-golang
+        refspec: v1.6.0
+      - name: managed-ci-workflow-test-scala
+        refspec: v1.6.0
       # - name: testapprepo
       #   refspec: tags/v1.7.1
       # - name: service-identity
