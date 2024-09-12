@@ -10,9 +10,9 @@ modules:
         optional_workflows:
           - managed-ci-pr-ft.yaml
         build_system: python
-      - name: managed-ci-workflow-test-golang
+      - name: tarun-repo-3
         refspec: v1.6.0
-      - name: managed-ci-workflow-test-scala
+      - name: tarun-repo-4
         refspec: v1.6.0
       # - name: testapprepo
       #   refspec: tags/v1.7.1
