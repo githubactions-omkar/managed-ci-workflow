@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Clone the MCI repository
         uses: actions/checkout@v3.3.0
+      - name: print event
+        run: echo "${{ github.event_name }}"
       # - name: Generate github app token
       #   id: glcp-gh-token
       #   uses: glcp/github-app-token-action@v1.7.0
