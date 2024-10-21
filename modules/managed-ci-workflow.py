@@ -10,6 +10,7 @@ import yaml
 from ruamel.yaml import YAML
 from pathlib import Path
 import trace
+from pathlib import Path
 
 # Set up the tracer
 tracer = trace.Trace(count=False, trace=True)
@@ -105,7 +106,16 @@ def main(module_name='', module_description='', repositories=[], default_managed
     logdir = f'{topdir}/logdir'
     file_name_pattern='managed-ci'
     
-    versioned_ci_repo = f'{os.path.dirname(__file__)}/../tarun-repo-config'
+    # `cwd`: current directory is straightforward
+    cwd = Path.cwd()
+    mod_path = Path(__file__).parent
+    relative_path_1 = '../../tarun-repo-config'
+    
+    src_path_1 = (mod_path / relative_path_1).resolve()
+    print(f' src_path_1 in managed-ci-workflow repo {src_path_1}')
+
+    
+    versioned_ci_repo = f'{os.path.dirname(__file__)}/../../tarun-repo-config'
     arr = os.listdir()
     print(arr)
     print(f'versioned CI Repo {versioned_ci_repo}')
