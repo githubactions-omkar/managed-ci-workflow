@@ -122,9 +122,9 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
 
     logger.debug(f'Final list of Repos in the glcp org')
 
-    sq_data: Dict[str, List[Dict[str,str]]] = \
-       # sonarqube_config(org_name=org_name)
-    num_sq_projects = len(sq_data['Projects'])
+    # sq_data: Dict[str, List[Dict[str,str]]] = \
+    #    # sonarqube_config(org_name=org_name)
+    # num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
     old_deploys={}
