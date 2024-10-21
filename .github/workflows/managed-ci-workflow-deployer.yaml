@@ -37,5 +37,4 @@ jobs:
           echo "------------managed-ci-workflow-------------------"
           ls -lart managed-ci-workflow/
           ls -lrta
-          tree -h .
           python managed-ci-workflow/main.py
