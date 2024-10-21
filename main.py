@@ -34,7 +34,7 @@ def main():
         print(f'ERROR: Env var "GITHUB_APP_TOKEN" must to be set.')
         sys.exit(1)
     
-    filename=f'{src_path_1}/workflow-deployment.yaml'
+    filename=f'{src_path_1}/configs/workflow-deployment.yaml'
     with open(filename, "r") as yaml_file:
         data = yaml.safe_load(yaml_file)
     modules=data['modules']
