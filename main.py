@@ -3,6 +3,8 @@ import sys
 import yaml
 import json
 import importlib.util
+managed_ci_repo = f'{os.path.dirname(__file__)}/../'
+print(managed_ci_repo)
 
 
 def main():
