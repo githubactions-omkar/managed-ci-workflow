@@ -53,8 +53,8 @@ def main():
 def import_module(the_module_name):
     module_dir = 'modules'
     spec = importlib.util.spec_from_file_location(
-              the_module_name, the_module_name, 
-              f'''{module_dir}/{the_module_name}.py''')
+              the_module_name, 
+              f'''{the_module_name}/{module_dir}/{the_module_name}.py''')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
