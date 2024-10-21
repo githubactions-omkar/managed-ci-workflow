@@ -109,6 +109,8 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
     managed_ci_workflow_repo='managed-ci-workflow'
 
     app_token = os.environ.get("GITHUB_APP_TOKEN", '')
+    topdir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    logdir = f'{topdir}/logdir'
 
     mu.mkdir_p(logdir)
     global logger
