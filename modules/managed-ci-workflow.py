@@ -132,7 +132,7 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
         r = repo.get('name')
         if r not in org_repos:
             # raise Exception(f"Repository {r} not found in {org_name} organization")
-            print(f'{r} repo not found in {org} ')
+            print(f'{r} repo not found in {org_name}')
             continue
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
