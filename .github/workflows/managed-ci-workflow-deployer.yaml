@@ -21,7 +21,7 @@ jobs:
           path: tarun-repo-config
           fetch-depth: 0
       - name: Set Job event name as environment variable
-        run: export RUN_EVENT=${{ github.event_name }}
+        run: echo RUN_EVENT=${{ github.event_name }} >> $GITHUB_ENV
       - name: Install Python modules
         env:
           GITHUB_APP_TOKEN: ${{ secrets.GITHUB_TOKEN }}
