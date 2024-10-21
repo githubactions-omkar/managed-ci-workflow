@@ -10,8 +10,6 @@ dirname = os.path.dirname(__file__)
 print(f'dirname {dirname}')
 filename = os.path.join(dirname, '../../tarun-repo-config/')
 print(f'filename {filename}')
-os.system('ls -lrt $filename')
-
 
 from pathlib import Path
 
@@ -25,7 +23,7 @@ mod_path = Path(__file__).parent
 
 
 # `src_path`: with the future power, it's just so straightforward
-relative_path_1 = '../../../'
+relative_path_1 = '../tarun-repo-config'
 
 src_path_1 = (mod_path / relative_path_1).resolve()
 print(f' src_path_1 {src_path_1}')
