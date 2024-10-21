@@ -123,7 +123,7 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
     logger.debug(f'Final list of Repos in the glcp org')
 
     sq_data: Dict[str, List[Dict[str,str]]] = \
-       sonarqube_config(org_name=org_name)
+       # sonarqube_config(org_name=org_name)
     num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
@@ -248,12 +248,12 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
         new_deploys[r]['refspec'] = refspec
         new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
 
-        sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+        # sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
-    if len(sq_data['Projects']) > num_sq_projects:
-        sonarqube_config(sq_data, save=True)
-    else:
-        logger.debug('nothing to push... all repos are present in the SonarQube config file')
+    # if len(sq_data['Projects']) > num_sq_projects:
+    #     sonarqube_config(sq_data, save=True)
+    # else:
+    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
     repository_statuscheck_secrets(repositories)
     update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
