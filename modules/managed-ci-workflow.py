@@ -322,10 +322,10 @@ def main(module_name='', module_description='', repositories=[], default_managed
         
         changed_repositories = compare_repositories(repositories1, repositories2)
         print(f'Changed repositories: {changed_repositories}')
-        process_all_repo(module_name='', module_description='', repositories=changed_repositories, default_managed_refspec=None)
+        process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
     else:
         print("RUN EVENT is not a push event, hence running the script normally")
-        process_all_repo(module_name='', module_description='', repositories=repositories.get('repositories'), default_managed_refspec=None)
+        process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
         
 
 def repository_statuscheck_secrets(repositories):
