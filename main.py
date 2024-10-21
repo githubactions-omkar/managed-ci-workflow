@@ -8,8 +8,9 @@ print(managed_ci_repo)
 import os
 dirname = os.path.dirname(__file__)
 print(f'dirname {dirname}')
-filename = os.path.join(dirname, '../../../')
+filename = os.path.join(dirname, '../../tarun-repo-config/')
 print(f'filename {filename}')
+os.system('ls -lrt $filename')
 
 
 from pathlib import Path
