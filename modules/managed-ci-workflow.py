@@ -657,7 +657,13 @@ def get_config(item='', data_type=any):
     '''This function checks if requested item exists in deployer-config.yaml or not'''
     # Read the YAML configuration file
     print(f'Inside the get_confi function')
-    with open("deployer-config.yaml", "r") as config_file:
+    file_path = 'deployer-config.yaml'
+    mod_path = Path(__file__).parent
+    relative_config_path = f'../{file_path}'
+    src_path_1 = (mod_path / relative_config_path).resolve()
+    # deployment_workflow_path = str((mod_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
+    deployment_workflow_path = 'configs/workflow-deployment.yaml'
+    with open(src_path_1, "r") as config_file:
         config = yaml.safe_load(config_file)
         print(config, item, data_type)
     try:
