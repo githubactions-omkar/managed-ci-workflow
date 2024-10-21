@@ -91,7 +91,7 @@ def compare_repositories(repo_list1, repo_list2):
     return changes
 
 api_url = 'https://api.github.com/graphql'
-# github_token = os.environ['GITHUB_APP_TOKEN']
+github_token = os.environ['GITHUB_APP_TOKEN']
 organisation = 'Omkarprakashchavan'
 repositories = []
 # headers = {
