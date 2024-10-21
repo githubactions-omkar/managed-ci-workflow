@@ -12,9 +12,6 @@ from pathlib import Path
 import trace
 from pathlib import Path
 
-# Set up the tracer
-tracer = trace.Trace(count=False, trace=True)
-
 sys.path.append(f'{os.path.dirname(__file__)}/..')
 import subprocess
 from os import listdir
@@ -125,7 +122,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
     print(f' file path ------ {file_path}')
     mod_path = Path(__file__).parent
     print(f'printing mod_path {mod_path}')
-    relative_config_path = '../tarun-repo-config/'
+    relative_config_path = '../../tarun-repo-config/'
     src_path_1 = (mod_path / relative_config_path).resolve()
     # deployment_workflow_path = str((mod_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
     deployment_workflow_path = 'configs/workflow-deployment.yaml'
