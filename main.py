@@ -3,8 +3,31 @@ import sys
 import yaml
 import json
 import importlib.util
-managed_ci_repo = f'{os.path.dirname(__file__)}/../'
+managed_ci_repo = f'{os.path.dirname(__file__)}/../tarun-repo-config/'
 print(managed_ci_repo)
+import os
+dirname = os.path.dirname(__file__)
+print(f'dirname {dirname}')
+filename = os.path.join(dirname, '../../../')
+print(f'filename {filename}')
+
+
+from pathlib import Path
+
+# `cwd`: current directory is straightforward
+cwd = Path.cwd()
+
+# `mod_path`: According to the accepted answer and combine with future power
+# if we are in the `helper_script.py`
+mod_path = Path(__file__).parent
+# OR if we are `import helper_script`
+
+
+# `src_path`: with the future power, it's just so straightforward
+relative_path_1 = '../../../'
+
+src_path_1 = (mod_path / relative_path_1).resolve()
+print(f' src_path_1 {src_path_1}')
 
 
 def main():
