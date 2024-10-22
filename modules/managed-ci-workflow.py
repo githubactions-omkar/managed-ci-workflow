@@ -23,7 +23,6 @@ from os.path import isfile, join
 import requests
 import json
 
-print('HELLllllllllo')
 
 def load_yaml(file_content):
     """Read workflow-deployment.yaml content into a dictionary."""
@@ -40,19 +39,19 @@ def get_file_content_from_commit(repo, commit_sha, file_path):
         raise ValueError(f"File '{file_path}' does not exist in commit {commit_sha}")
 
 def get_second_top_commit(repo_path):
-    # Open the repository
     repo = git.Repo(repo_path)
-    # Ensure we're working with the 'main' branch
     try:
         branch = repo.heads.main
     except AttributeError:
-        raise ValueError("The repository does not have a branch named 'main'.")
-    # Get the list of commits in the branch
+        logger.error("The repository does not have a branch named 'main'.")
+        return False
+
     commits = list(repo.iter_commits(branch.name, max_count=2))
     print(commits)
     if len(commits) < 2:
-        raise ValueError("There are less than two commits in the 'main' branch.")
-    # The second most recent commit will be the second item in the list
+        logger.error("There are less than two commits in the 'main' branch.")
+        return False
+
     second_top_commit = commits[1]
     commit = repo.commit(commits[0])
     parent_commit = commit.parents[0] if commit.parents else None
@@ -304,6 +303,9 @@ def main(module_name='', module_description='', repositories=[], default_managed
         
         latest_commit_sha = main_branch.commit.hexsha
         second_top_commit = get_second_top_commit(repo_path)
+        if not second_top_commit:
+            logger.error("Unable to get second top commit for the managed-ci-workflow-config repository..")
+            sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
         print(f"Latest commit SHA of 'main': {latest_commit_sha}")
         try:
           file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
@@ -963,22 +965,6 @@ def get_file_content_from_commit(repo, commit_sha, file_path):
         return file_content
     except KeyError:
         raise ValueError(f"File '{file_path}' does not exist in commit {commit_sha}")
-
-def get_second_top_commit(repo_path):
-    # Open the repository
-    repo = git.Repo(repo_path)
-    # Ensure we're working with the 'main' branch
-    try:
-        branch = repo.heads.main
-    except AttributeError:
-        raise ValueError("The repository does not have a branch named 'main'.")
-    # Get the list of commits in the branch
-    commits = list(repo.iter_commits(branch.name, max_count=2))
-    if len(commits) < 2:
-        raise ValueError("There are less than two commits in the 'main' branch.")
-    # The second most recent commit will be the second item in the list
-    second_top_commit = commits[1]
-    return second_top_commit
 
 def compare_repositories(repo_list1, repo_list2):
     """Compare two lists of repositories and return the differences."""
