@@ -3,25 +3,22 @@ import hashlib
 import logging
 import os
 import sys
-from typing import Dict, List, Union
-from datetime import datetime
 import git
 import yaml
-from ruamel.yaml import YAML
-from pathlib import Path
-import trace
-from pathlib import Path
-import utils.myutils as mu
-from utils.myutils import file_exists, mkdir_p
-from utils.github_apis import GitHubAPIs
-
-sys.path.append(f'{os.path.dirname(__file__)}/..')
 import subprocess
-from os import listdir
-from os.path import isfile, join
-
 import requests
 import json
+import utils.myutils as mu
+from os import listdir
+from os.path import isfile, join
+from typing import Dict, List, Union
+from datetime import datetime
+from ruamel.yaml import YAML
+from pathlib import Path
+from pathlib import Path
+from utils.myutils import file_exists, mkdir_p
+from utils.github_apis import GitHubAPIs
+sys.path.append(f'{os.path.dirname(__file__)}/..')
 
 
 def load_yaml(file_content):
@@ -262,37 +259,30 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
 
 def main(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     logger: Union[logging.Logger, None] = None
-    gh_obj = None
-    topdir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    logdir = f'{topdir}/logdir'
-    file_name_pattern='managed-ci'
-    
-    # `cwd`: current directory is straightforward
     cwd = Path.cwd()
-    mod_path = Path(__file__).parent
-    relative_path_1 = '../../tarun-repo-config'
+    script_path = Path(__file__).parent
+    mci_path = '../../tarun-repo-config'
     
-    src_path_1 = (mod_path / relative_path_1).resolve()
-    print(f' src_path_1 in managed-ci-workflow repo {src_path_1}')
+    mci_abs_path = (script_path / mci_path).resolve()
+    # print(f' mci_abs_path in managed-ci-workflow repo {mci_abs_path}')
     
-    versioned_ci_repo = f'{os.path.dirname(__file__)}/../../tarun-repo-config'
-    arr = os.listdir()
-    print(arr)
-    print(f'versioned CI Repo {versioned_ci_repo}')
-    repo_path = versioned_ci_repo
+    # versioned_ci_repo = f'{os.path.dirname(__file__)}/../../tarun-repo-config'
+
+    # print(f'versioned CI Repo {versioned_ci_repo}')
+    # repo_path = versioned_ci_repo
     # file_path = 'tarun-repo-config/configs/workflow-deployment.yaml'
-    file_path = 'workflow-deployment.yaml'
-    print(f' file path ------ {file_path}')
-    mod_path = Path(__file__).parent
-    print(f'printing mod_path {mod_path}')
+    # file_path = 'workflow-deployment.yaml'
+    # print(f' file path ------ {file_path}')
+    script_path = Path(__file__).parent
+    print(f'printing script_path {script_path}')
     relative_config_path = '../../tarun-repo-config/'
-    src_path_1 = (mod_path / relative_config_path).resolve()
-    # deployment_workflow_path = str((mod_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
+    mci_abs_path = (script_path / relative_config_path).resolve()
+    # deployment_workflow_path = str((script_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
     deployment_workflow_path = 'configs/workflow-deployment.yaml'
     print(f'deployment_workflow_path ============= {deployment_workflow_path}')
-    print(f'{mod_path},-------------------- {src_path_1}')
-    repo_path = src_path_1
-    print(f'printing version ci repo name {versioned_ci_repo} {repo_path}')
+    print(f'{script_path},-------------------- {mci_abs_path}')
+    repo_path = mci_abs_path
+    
     if os.environ['RUN_EVENT'] == 'push':
         repo = git.Repo(repo_path)
         try:
@@ -304,14 +294,13 @@ def main(module_name='', module_description='', repositories=[], default_managed
         latest_commit_sha = main_branch.commit.hexsha
         second_top_commit = get_second_top_commit(repo_path)
         if not second_top_commit:
-            logger.error("Unable to get second top commit for the managed-ci-workflow-config repository..")
             sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
         print(f"Latest commit SHA of 'main': {latest_commit_sha}")
         try:
           file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
-          # print(f"Commit SHA of '{file_path}' in the latest commit: {file_commit_sha}")
+          # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
         except ValueError:
-          print(f"File '{file_path}' does not exist in the latest commit {latest_commit_sha}")
+          print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
         try:
           content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
           content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
@@ -328,7 +317,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(f'Changed repositories: {changed_repositories}')
         process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
     else:
-        print("RUN EVENT is not a push event, hence running the script normally")
+        logger.info("RUN EVENT is not a push event, hence running the script normally")
         process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
         
 
@@ -660,12 +649,12 @@ def get_config(item='', data_type=any):
     # Read the YAML configuration file
     print(f'Inside the get_confi function')
     file_path = 'deployer-config.yaml'
-    mod_path = Path(__file__).parent
+    script_path = Path(__file__).parent
     relative_config_path = f'../{file_path}'
-    src_path_1 = (mod_path / relative_config_path).resolve()
-    # deployment_workflow_path = str((mod_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
+    deployer_config_abs_path = (script_path / relative_config_path).resolve()
+    # deployment_workflow_path = str((script_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
     deployment_workflow_path = 'configs/workflow-deployment.yaml'
-    with open(src_path_1, "r") as config_file:
+    with open(deployer_config_abs_path, "r") as config_file:
         config = yaml.safe_load(config_file)
         print(config, item, data_type)
     try:
