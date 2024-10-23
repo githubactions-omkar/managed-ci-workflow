@@ -57,7 +57,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
     # org_repos : List[str] = gh_obj.get_repo_names_in_org()
     org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
 
-    logger.debug(f'Final list of Repos in the glcp org')
+    logger.debug(f'Final list of Repos in the glcp org {org_repos}')
 
     # sq_data: Dict[str, List[Dict[str,str]]] = \
     #    sonarqube_config(org_name=org_name)
@@ -72,6 +72,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
         full_build_system = repo.get('build_system', [])
+        print(r, refspec, optional_workflows_requested, full_build_system)
         build_system = full_build_system[0]
 
         if gh_obj.check_is_repo_archived(r):
