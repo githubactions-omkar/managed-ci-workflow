@@ -73,7 +73,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         optional_workflows_requested = repo.get('optional_workflows', [])
         full_build_system = repo.get('build_system', [])
         print(r, refspec, optional_workflows_requested, full_build_system)
-        if len(build_system) > 1:
+        if len(full_build_system) > 1:
             build_system = full_build_system[0]
         else:
             build_system = []
