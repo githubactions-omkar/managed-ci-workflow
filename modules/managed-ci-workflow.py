@@ -141,6 +141,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         for pwf in primary_workflows:
             source = f'{primary_workflow_path}/common/{pwf}'
             dest = get_dest_workflow_path(r, pwf)
+            print(dest)
             logger.debug(f'comparing primary workflow {source} vs. {dest}')
             if not gh_obj.check_workflow_file(r, pwf):
                 # File does not exist, exists at 0 bytes, or other exception
@@ -336,7 +337,11 @@ def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[
         sys.exit(1)
 
 def get_dest_workflow_path(repo_name, workflow):
+    # script_path = Path(__file__).parent
+    # relative_config_path = f'../../{repo_name}/.github/workflows/{workflow}'
+    # workflow_path = (script_path / relative_config_path).resolve()
     workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
+    print(f'workflow_path: {workflow_path}')
     if file_exists(workflow_path, check_nonzero_filesize=True):
         return workflow_path
     return None
