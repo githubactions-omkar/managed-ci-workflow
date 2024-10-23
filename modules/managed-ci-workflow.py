@@ -54,7 +54,8 @@ def main(module_name='', module_description='', repositories=[], default_managed
     ## Change values accordingly in get_logger()
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
-    org_repos : List[str] = gh_obj.get_repo_names_in_org()
+    # org_repos : List[str] = gh_obj.get_repo_names_in_org()
+    org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
 
     logger.debug(f'Final list of Repos in the glcp org')
 
