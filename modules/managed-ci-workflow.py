@@ -100,11 +100,10 @@ def main(module_name='', module_description='', repositories=[], default_managed
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
+        print(f'template_workflow_path {template_workflow_path}.. {os.listdir(template_workflow_path)}')
+        print(f'primary_workflow_path {primary_workflow_path}.. {os.listdir(primary_workflow_path)}')
         print(f'workflow_manifest_file {workflow_manifest_file}..')
-        arr = os.listdir(versioned_ci_repo)
-        print(arr)
-        file_path = os.listdir(script_path)
-        print(file_path)
+
         # continue
         primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
         
