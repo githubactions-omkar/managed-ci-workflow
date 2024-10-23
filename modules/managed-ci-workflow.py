@@ -65,18 +65,15 @@ def main(module_name='', module_description='', repositories=[], default_managed
 
     new_deploys={}
     old_deploys={}
+    print(repositories)
     for repo in repositories:
         r = repo.get('name')
         if r not in org_repos:
             raise Exception(f"Repository {r} not found in {org_name} organization")
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
-        build_system = repo.get('build_system')
+        build_system = repo.get('build_system', [])
         print(r, refspec, optional_workflows_requested, build_system)
-        # if len(full_build_system) > 1:
-        #     build_system = full_build_system[0]
-        # else:
-        #     build_system = []
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
@@ -248,7 +245,10 @@ def repository_statuscheck_secrets(repositories):
 def workflow_manifest(manifest_file, build_system):
     with open(manifest_file, "r") as f:
         data = yaml.safe_load(f)
-    return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
+        if build_system == []:
+            return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), []
+        else:
+            return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
 
 def custom_branch_update(custom_branch_workflow: str, repo_name: str, type: str):
     if type != "common":
