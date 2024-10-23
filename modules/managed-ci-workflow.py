@@ -54,14 +54,13 @@ def main(module_name='', module_description='', repositories=[], default_managed
     ## Change values accordingly in get_logger()
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
-    # org_repos : List[str] = gh_obj.get_repo_names_in_org()
-    org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
+    org_repos : List[str] = gh_obj.get_repo_names_in_org()
 
-    logger.debug(f'Final list of Repos in the glcp org {org_repos}')
+    logger.debug(f'Final list of Repos in the glcp org')
 
-    # sq_data: Dict[str, List[Dict[str,str]]] = \
-    #    sonarqube_config(org_name=org_name)
-    # num_sq_projects = len(sq_data['Projects'])
+    sq_data: Dict[str, List[Dict[str,str]]] = \
+       sonarqube_config(org_name=org_name)
+    num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
     old_deploys={}
@@ -72,11 +71,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
         full_build_system = repo.get('build_system', [])
-        print(r, refspec, optional_workflows_requested, full_build_system)
-        if len(full_build_system) > 1:
-            build_system = full_build_system[0]
-        else:
-            build_system = []
+        build_system = full_build_system[0]
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
@@ -91,9 +86,10 @@ def main(module_name='', module_description='', repositories=[], default_managed
         if not clone_status:
             logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
             continue
-        
-        versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
-        print(f'printing versioned_ci_repo {versioned_ci_repo}......')
+        script_path = Path(__file__).parent
+        relative_config_path = f'../{r}/{managed_ci_workflow_repo}'
+        versioned_ci_repo = (script_path / relative_config_path).resolve()
+        # versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
 
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
@@ -194,13 +190,13 @@ def main(module_name='', module_description='', repositories=[], default_managed
 
         sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
-    # if len(sq_data['Projects']) > num_sq_projects:
-    #     sonarqube_config(sq_data, save=True)
-    # else:
-    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
+    if len(sq_data['Projects']) > num_sq_projects:
+        sonarqube_config(sq_data, save=True)
+    else:
+        logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
     repository_statuscheck_secrets(repositories)
-    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
+    update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
     
 def repository_statuscheck_secrets(repositories):
     '''This functions adds status checks and secrets to required repositories'''
