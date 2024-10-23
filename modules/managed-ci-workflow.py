@@ -347,7 +347,7 @@ def get_dest_workflow_path(repo_name, workflow):
     return None
 
 def calc_template_md5sum(pr_template):
-    prin(f'printing calc_template_md5sum path: {pr_template}')
+    print(f'printing calc_template_md5sum path: {pr_template}')
     with open(pr_template, 'rb') as fh:
         data = fh.read()
         pr_template_md5 = hashlib.md5(data).hexdigest()
