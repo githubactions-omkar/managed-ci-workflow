@@ -337,10 +337,10 @@ def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[
         sys.exit(1)
 
 def get_dest_workflow_path(repo_name, workflow):
-    # script_path = Path(__file__).parent
-    # relative_config_path = f'../../{repo_name}/.github/workflows/{workflow}'
-    # workflow_path = (script_path / relative_config_path).resolve()
-    workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
+    script_path = Path(__file__).parent
+    relative_config_path = f'../../{repo_name}/.github/workflows/{workflow}'
+    workflow_path = (script_path / relative_config_path).resolve()
+    # workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
     print(f'workflow_path: {workflow_path}')
     if file_exists(workflow_path, check_nonzero_filesize=True):
         return workflow_path
