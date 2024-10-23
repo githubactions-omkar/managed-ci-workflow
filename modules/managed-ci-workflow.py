@@ -92,7 +92,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
             logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
             continue
         script_path = Path(__file__).parent
-        relative_config_path = f'../{r}/{managed_ci_workflow_repo}'
+        relative_config_path = f'../{r}/'#{managed_ci_workflow_repo}'
         versioned_ci_repo = (script_path / relative_config_path).resolve()
         # versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
         print(f'printing versioned_ci_repo {versioned_ci_repo}......')
@@ -101,7 +101,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
         print(f'workflow_manifest_file {workflow_manifest_file}..')
-        arr = os.listdir(script_path)
+        arr = os.listdir(versioned_ci_repo)
         print(arr)
         file_path = os.listdir(script_path)
         print(file_path)
