@@ -105,7 +105,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(arr)
         file_path = os.listdir(script_path)
         print(file_path)
-        continue
+        # continue
         primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
         
         workflow_sources=[]
