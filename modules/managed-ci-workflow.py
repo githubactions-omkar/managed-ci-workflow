@@ -101,7 +101,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
         print(f'workflow_manifest_file {workflow_manifest_file}..')
-        arr = os.listdir(versioned_ci_repo)
+        arr = os.listdir(script_path)
         print(arr)
         file_path = os.listdir(script_path)
         print(file_path)
