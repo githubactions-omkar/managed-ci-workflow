@@ -59,6 +59,51 @@ def main(module_name='', module_description='', repositories=[], default_managed
     # sq_data: Dict[str, List[Dict[str,str]]] = \
     #    sonarqube_config(org_name=org_name)
     # num_sq_projects = len(sq_data['Projects'])
+    managed_ci_workflow_config_repo = 'tarun-repo-config'
+    managed_ci_workflow_config_repo_path = f'{os.path.dirname(__file__)}/../../{managed_ci_workflow_config_repo}'
+    managed_ci_workflow_config_repo_path = os.path.abspath(managed_ci_workflow_config_repo_path)
+    print(f'managed_ci_workflow_config_repo_path: {managed_ci_workflow_config_repo_path} ..')
+    files = os.listdir(managed_ci_workflow_config_repo_path)
+    print(files)
+
+    # if os.environ['RUN_EVENT'] == 'push':
+    #     repo = git.Repo(repo_path)
+    #     try:
+    #       main_branch = repo.heads.main
+    #     except AttributeError:
+    #       raise ValueError("The repository does not have a branch named 'main'.")
+        
+    #     latest_commit_sha = main_branch.commit.hexsha
+    #     second_top_commit = get_second_top_commit(repo_path)
+    #     if not second_top_commit:
+    #         sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
+    #     print(f"Latest commit SHA of 'main': {latest_commit_sha}")
+    #     try:
+    #       file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+    #       # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
+    #     except ValueError:
+    #       print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
+    #     if file_commit_sha:
+    #         try:
+    #             content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
+    #             content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+    #         except ValueError as e:
+    #             print(e)
+        
+    #         dict_old = load_yaml(content_old)
+    #         dict_new = load_yaml(content_new)
+    #         # Extract repositories data from dict1 and dict2
+    #         repositories1 = dict_old['modules'][0]['repositories']
+    #         repositories2 = dict_new['modules'][0]['repositories']
+            
+    #         changed_repositories = compare_repositories(repositories1, repositories2)
+    #         print(f'Changed repositories: {changed_repositories}')
+    #         process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
+    #     else:
+    #         print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
+    # else:
+    #     logger.info("RUN EVENT is not a push event, hence running the script normally")
+    #     process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
 
     new_deploys={}
     old_deploys={}
