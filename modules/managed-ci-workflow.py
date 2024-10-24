@@ -85,146 +85,6 @@ def main(module_name='', module_description='', repositories=[], default_managed
         logger.info("RUN EVENT is not a push event, hence running the script normally")
         process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
 
-    # new_deploys={}
-    # old_deploys={}
-    # for repo in repositories:
-    #     r = repo.get('name')
-    #     if r not in org_repos:
-    #         raise Exception(f"Repository {r} not found in {org_name} organization")
-    #     refspec = repo.get('refspec', default_managed_refspec)
-    #     optional_workflows_requested = repo.get('optional_workflows', [])
-    #     full_build_system = repo.get('build_system', [])
-    #     if len(full_build_system) > 1:
-    #         build_system = full_build_system[0]
-    #     else:
-    #         build_system = full_build_system
-
-    #     if gh_obj.check_is_repo_archived(r):
-    #         logger.info(f'Repo "{r}" is Archived ...Skipping')
-    #         continue
-
-    #     # Clone participating project repo
-    #     git_clone(org_name, r, app_token)
-
-    #     # Clone managed-ci-workflow and checkout a specific refspec within the project repo directory.
-    #     # Retieve workflows from manifest file.
-    #     clone_status = git_clone(org_name, managed_ci_workflow_repo, app_token, refspec=refspec, directory=r)
-    #     if not clone_status:
-    #         logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
-    #         continue
-    #     versioned_ci_repo = f'{os.path.dirname(__file__)}/../../{r}/{managed_ci_workflow_repo}'
-    #     print(f'versioned_ci_repo: {versioned_ci_repo}')
-    #     versioned_ci_repo = os.path.abspath(versioned_ci_repo)
-    #     print(f'versioned_ci_repo: {versioned_ci_repo}')
-
-    #     template_workflow_path =f'{versioned_ci_repo}/templates'
-    #     primary_workflow_path =f'{versioned_ci_repo}/workflows'
-    #     workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
-    #     print(template_workflow_path, primary_workflow_path, workflow_manifest_file)
-
-    #     primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
-        
-    #     workflow_sources=[]
-    #     workflow_exists=[]
-    #     for twf in template_workflows:
-    #         if not gh_obj.check_workflow_file(r, twf):
-    #             # File does not exist, exists at 0 bytes, or other exception
-    #             workflow_sources.append(f'{template_workflow_path}/{twf}')
-    #         else:
-    #             workflow_exists.append(f'{template_workflow_path}/{twf}')
-    #     for owf in optional_workflows:
-    #         if owf not in optional_workflows_requested:
-    #             continue
-    #         source = f'{primary_workflow_path}/common/{owf}'
-    #         dest = get_dest_workflow_path(r, owf)
-    #         logger.debug(f'comparing optional workflow {source} vs. {dest}')
-    #         if not gh_obj.check_workflow_file(r, owf):
-    #             # File does not exist, exists at 0 bytes, or other exception
-    #             logger.debug(f'workflow {owf} does not exist in {r}')
-    #             workflow_sources.append(f'{primary_workflow_path}/common/{owf}')
-    #         else:
-    #             if owf in cron_workflows:
-    #                 cron_wf_update(owf, r, "common")               
-    #             logger.info(f'optional workflow file {owf} exists for repo {r}')
-    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/common/{owf}')
-    #             dest_md5sum = calc_template_md5sum(dest)
-    #             logger.debug(f'md5sum of source optional workflow file {source_md5sum}')
-    #             logger.debug(f'md5sum of user repo {r} optional workflow file {dest_md5sum}')
-    #             if not source_md5sum == dest_md5sum:
-    #                 workflow_sources.append(f'{primary_workflow_path}/common/{owf}')
-    #                 logger.debug(f'need to deploy source optional workflow file to repo "{r}"')
-    #             else:
-    #                 workflow_exists.append(f'{primary_workflow_path}/common/{owf}')
-    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {owf} is the same.  skipping deployment.')
-    #                 if owf in cron_workflows:
-    #                     cron_wf_revert(owf, r)                      
-    #     for pwf in primary_workflows:
-    #         source = f'{primary_workflow_path}/common/{pwf}'
-    #         dest = get_dest_workflow_path(r, pwf)
-    #         logger.debug(f'comparing primary workflow {source} vs. {dest}')
-    #         if not gh_obj.check_workflow_file(r, pwf):
-    #             # File does not exist, exists at 0 bytes, or other exception
-    #             logger.debug(f'workflow {pwf} does not exist in {r}')
-    #             workflow_sources.append(f'{primary_workflow_path}/common/{pwf}')
-    #         else:
-    #             logger.info(f'primary workflow file {pwf} exists for repo {r}')
-    #             if pwf in custom_branch_workflows:
-    #                 custom_branch_update(pwf, r, "common")
-    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/common/{pwf}')
-    #             dest_md5sum = calc_template_md5sum(dest)
-    #             logger.debug(f'md5sum of source primary workflow file {source_md5sum}')
-    #             logger.debug(f'md5sum of user repo {r} primary workflow file {dest_md5sum}')
-    #             if not source_md5sum == dest_md5sum:
-    #                 workflow_sources.append(f'{primary_workflow_path}/common/{pwf}')
-    #                 logger.debug(f'need to deploy source primary workflow file to repo "{r}"')
-    #             else:
-    #                 workflow_exists.append(f'{primary_workflow_path}/common/{pwf}')
-    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {pwf} is the same.  skipping deployment.')
-    #     for bswf in build_system_workflows:
-    #         source = f'{primary_workflow_path}/{build_system}'
-    #         dest = get_dest_workflow_path(r, bswf)
-    #         logger.debug(f'comparing {build_system} Build System workflow {source} vs. {dest}')
-    #         if not gh_obj.check_workflow_file(r, bswf):
-    #             # File does not exist, exists at 0 bytes, or other exception
-    #             logger.debug(f'workflow {bswf} does not exist in {r}')
-    #             workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
-    #         else:
-    #             logger.info(f'{build_system} Build System workflow file {bswf} exists for repo {r}')
-    #             if bswf in custom_branch_workflows:
-    #                 custom_branch_update(bswf, r, build_system)
-    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/{build_system}/{bswf}')
-    #             dest_md5sum = calc_template_md5sum(dest)
-    #             logger.debug(f'md5sum of source Build System workflow file {source_md5sum}')
-    #             logger.debug(f'md5sum of user repo {r} Build System workflow file {dest_md5sum}')
-    #             if not source_md5sum == dest_md5sum:
-    #                 workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
-    #                 logger.debug(f'need to deploy source Build System workflow file to repo "{r}"')
-    #             else:
-    #                 workflow_exists.append(f'{primary_workflow_path}/{build_system}/{bswf}')
-    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {bswf} is the same.  skipping deployment.')
-        
-    #     wf_cleanup(primary_workflows=primary_workflows, template_workflows=template_workflows, optional_workflows=optional_workflows, build_system_workflows=build_system_workflows, repo_name=r)
-    #     git_push_workflows(r, workflow_sources, app_token)
-
-    #     # Add to the dict of new deployments for the report
-    #     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    #     old_deploys[r] = {}
-    #     old_deploys[r]['refspec'] = refspec
-    #     old_deploys[r]['workflows'] = [{'name': os.path.basename(wf)} for wf in workflow_exists]
-    #     new_deploys[r] = {}
-    #     new_deploys[r]['refspec'] = refspec
-    #     new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
-
-    #     sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
-
-    # if len(sq_data['Projects']) > num_sq_projects:
-    #     sonarqube_config(sq_data, save=True)
-    # else:
-    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
-        
-    # repository_statuscheck_secrets(repositories)
-    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
-
 def process_all_repo(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     """This Function processes all the repos passed to the function"""
     if not 'ORG_NAME' in os.environ:
@@ -765,9 +625,9 @@ def update_secret_access_to_repo(repository_ids, secrets):
                 data = {
                     "selected_repository_ids": repo_ids
                 }
-            except requests.exceptions.RequestException as e:
-                logger.debug(f'Error while fetching existing repository names for {secret} secret')
-            try:
+            # except requests.exceptions.RequestException as e:
+            #     logger.debug(f'Error while fetching existing repository names for {secret} secret')
+            # try:
                 response = requests.put(url, headers=headers, json=data)
                 response.raise_for_status()
                 logger.info(f'Updated access to the {secret} secret for given repos')
