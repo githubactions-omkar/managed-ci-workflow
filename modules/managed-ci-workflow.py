@@ -240,6 +240,8 @@ def repository_statuscheck_secrets(repositories):
 def workflow_manifest(manifest_file, build_system):
     with open(manifest_file, "r") as f:
         data = yaml.safe_load(f)
+        if build_system == []:
+            return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), []
     return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
 
 
