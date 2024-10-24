@@ -39,6 +39,9 @@ jobs:
           echo "------------managed-ci-workflow-------------------"
           ls -lart managed-ci-workflow/
           ls -lrta
+          git config --global user.email "omkarprakashchavan@gmail.com"
+          git config --global user.name "Automation"
+          GITHUB_APP_TOKEN=${{ secrets.GITHUB_TOKEN }}
           python managed-ci-workflow/main.py
       - name: tree -h
         run: tree -h .
