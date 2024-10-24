@@ -89,7 +89,8 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(f'versioned_ci_repo: {versioned_ci_repo}')
         versioned_ci_repo = os.path.abspath(versioned_ci_repo)
         print(f'versioned_ci_repo: {versioned_ci_repo}')
-        os.listdir(versioned_ci_repo)
+        files = os.listdir(versioned_ci_repo)
+        print(files)
 
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
