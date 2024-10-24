@@ -87,7 +87,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         if not clone_status:
             logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
             continue
-        versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
+        versioned_ci_repo = f'{os.path.dirname(__file__)}/../../{r}/{managed_ci_workflow_repo}'
         print(f'versioned_ci_repo: {versioned_ci_repo}')
         versioned_ci_repo = os.path.abspath(versioned_ci_repo)
         print(f'versioned_ci_repo: {versioned_ci_repo}')
