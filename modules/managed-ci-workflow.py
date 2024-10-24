@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import sys
+import git
 from typing import Dict, List, Union
 from datetime import datetime
 
@@ -36,6 +37,195 @@ logdir = f'{topdir}/logdir'
 file_name_pattern='managed-ci'
 
 def main(module_name='', module_description='', repositories=[], default_managed_refspec=None):
+    managed_ci_workflow_config_repo = 'tarun-repo-config'
+    managed_ci_workflow_config_repo_path = f'{os.path.dirname(__file__)}/../../{managed_ci_workflow_config_repo}'
+    managed_ci_workflow_config_repo_path = os.path.abspath(managed_ci_workflow_config_repo_path)
+    print(f'managed_ci_workflow_config_repo_path: {managed_ci_workflow_config_repo_path} ..')
+    files = os.listdir(managed_ci_workflow_config_repo_path)
+    print(files)
+    deployment_workflow_path = f'{managed_ci_workflow_config_repo_path}/configs/workflow-deployment.yaml'
+
+    if os.environ['RUN_EVENT'] == 'push':
+        repo = git.Repo(managed_ci_workflow_config_repo_path)
+        try:
+          main_branch = repo.heads.main
+        except AttributeError:
+          raise ValueError("The {managed_ci_workflow_config_repo} repository does not have a branch named 'main'.")
+        
+        latest_commit_sha = main_branch.commit.hexsha
+        second_top_commit = get_second_top_commit(managed_ci_workflow_config_repo_path)
+        if not second_top_commit:
+            sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
+        print(f"Latest commit SHA of 'main': {latest_commit_sha}")
+        try:
+          file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+          # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
+        except ValueError:
+          print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
+        if file_commit_sha:
+            try:
+                content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
+                content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+            except ValueError as e:
+                print(e)
+        
+            dict_old = load_yaml(content_old)
+            dict_new = load_yaml(content_new)
+            # Extract repositories data from dict1 and dict2
+            repositories1 = dict_old['modules'][0]['repositories']
+            repositories2 = dict_new['modules'][0]['repositories']
+            
+            changed_repositories = compare_repositories(repositories1, repositories2)
+            print(f'Changed repositories: {changed_repositories}')
+            process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
+        else:
+            print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
+    else:
+        logger.info("RUN EVENT is not a push event, hence running the script normally")
+        process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
+
+    # new_deploys={}
+    # old_deploys={}
+    # for repo in repositories:
+    #     r = repo.get('name')
+    #     if r not in org_repos:
+    #         raise Exception(f"Repository {r} not found in {org_name} organization")
+    #     refspec = repo.get('refspec', default_managed_refspec)
+    #     optional_workflows_requested = repo.get('optional_workflows', [])
+    #     full_build_system = repo.get('build_system', [])
+    #     if len(full_build_system) > 1:
+    #         build_system = full_build_system[0]
+    #     else:
+    #         build_system = full_build_system
+
+    #     if gh_obj.check_is_repo_archived(r):
+    #         logger.info(f'Repo "{r}" is Archived ...Skipping')
+    #         continue
+
+    #     # Clone participating project repo
+    #     git_clone(org_name, r, app_token)
+
+    #     # Clone managed-ci-workflow and checkout a specific refspec within the project repo directory.
+    #     # Retieve workflows from manifest file.
+    #     clone_status = git_clone(org_name, managed_ci_workflow_repo, app_token, refspec=refspec, directory=r)
+    #     if not clone_status:
+    #         logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
+    #         continue
+    #     versioned_ci_repo = f'{os.path.dirname(__file__)}/../../{r}/{managed_ci_workflow_repo}'
+    #     print(f'versioned_ci_repo: {versioned_ci_repo}')
+    #     versioned_ci_repo = os.path.abspath(versioned_ci_repo)
+    #     print(f'versioned_ci_repo: {versioned_ci_repo}')
+
+    #     template_workflow_path =f'{versioned_ci_repo}/templates'
+    #     primary_workflow_path =f'{versioned_ci_repo}/workflows'
+    #     workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
+    #     print(template_workflow_path, primary_workflow_path, workflow_manifest_file)
+
+    #     primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
+        
+    #     workflow_sources=[]
+    #     workflow_exists=[]
+    #     for twf in template_workflows:
+    #         if not gh_obj.check_workflow_file(r, twf):
+    #             # File does not exist, exists at 0 bytes, or other exception
+    #             workflow_sources.append(f'{template_workflow_path}/{twf}')
+    #         else:
+    #             workflow_exists.append(f'{template_workflow_path}/{twf}')
+    #     for owf in optional_workflows:
+    #         if owf not in optional_workflows_requested:
+    #             continue
+    #         source = f'{primary_workflow_path}/common/{owf}'
+    #         dest = get_dest_workflow_path(r, owf)
+    #         logger.debug(f'comparing optional workflow {source} vs. {dest}')
+    #         if not gh_obj.check_workflow_file(r, owf):
+    #             # File does not exist, exists at 0 bytes, or other exception
+    #             logger.debug(f'workflow {owf} does not exist in {r}')
+    #             workflow_sources.append(f'{primary_workflow_path}/common/{owf}')
+    #         else:
+    #             if owf in cron_workflows:
+    #                 cron_wf_update(owf, r, "common")               
+    #             logger.info(f'optional workflow file {owf} exists for repo {r}')
+    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/common/{owf}')
+    #             dest_md5sum = calc_template_md5sum(dest)
+    #             logger.debug(f'md5sum of source optional workflow file {source_md5sum}')
+    #             logger.debug(f'md5sum of user repo {r} optional workflow file {dest_md5sum}')
+    #             if not source_md5sum == dest_md5sum:
+    #                 workflow_sources.append(f'{primary_workflow_path}/common/{owf}')
+    #                 logger.debug(f'need to deploy source optional workflow file to repo "{r}"')
+    #             else:
+    #                 workflow_exists.append(f'{primary_workflow_path}/common/{owf}')
+    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {owf} is the same.  skipping deployment.')
+    #                 if owf in cron_workflows:
+    #                     cron_wf_revert(owf, r)                      
+    #     for pwf in primary_workflows:
+    #         source = f'{primary_workflow_path}/common/{pwf}'
+    #         dest = get_dest_workflow_path(r, pwf)
+    #         logger.debug(f'comparing primary workflow {source} vs. {dest}')
+    #         if not gh_obj.check_workflow_file(r, pwf):
+    #             # File does not exist, exists at 0 bytes, or other exception
+    #             logger.debug(f'workflow {pwf} does not exist in {r}')
+    #             workflow_sources.append(f'{primary_workflow_path}/common/{pwf}')
+    #         else:
+    #             logger.info(f'primary workflow file {pwf} exists for repo {r}')
+    #             if pwf in custom_branch_workflows:
+    #                 custom_branch_update(pwf, r, "common")
+    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/common/{pwf}')
+    #             dest_md5sum = calc_template_md5sum(dest)
+    #             logger.debug(f'md5sum of source primary workflow file {source_md5sum}')
+    #             logger.debug(f'md5sum of user repo {r} primary workflow file {dest_md5sum}')
+    #             if not source_md5sum == dest_md5sum:
+    #                 workflow_sources.append(f'{primary_workflow_path}/common/{pwf}')
+    #                 logger.debug(f'need to deploy source primary workflow file to repo "{r}"')
+    #             else:
+    #                 workflow_exists.append(f'{primary_workflow_path}/common/{pwf}')
+    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {pwf} is the same.  skipping deployment.')
+    #     for bswf in build_system_workflows:
+    #         source = f'{primary_workflow_path}/{build_system}'
+    #         dest = get_dest_workflow_path(r, bswf)
+    #         logger.debug(f'comparing {build_system} Build System workflow {source} vs. {dest}')
+    #         if not gh_obj.check_workflow_file(r, bswf):
+    #             # File does not exist, exists at 0 bytes, or other exception
+    #             logger.debug(f'workflow {bswf} does not exist in {r}')
+    #             workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+    #         else:
+    #             logger.info(f'{build_system} Build System workflow file {bswf} exists for repo {r}')
+    #             if bswf in custom_branch_workflows:
+    #                 custom_branch_update(bswf, r, build_system)
+    #             source_md5sum = calc_template_md5sum(f'{primary_workflow_path}/{build_system}/{bswf}')
+    #             dest_md5sum = calc_template_md5sum(dest)
+    #             logger.debug(f'md5sum of source Build System workflow file {source_md5sum}')
+    #             logger.debug(f'md5sum of user repo {r} Build System workflow file {dest_md5sum}')
+    #             if not source_md5sum == dest_md5sum:
+    #                 workflow_sources.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+    #                 logger.debug(f'need to deploy source Build System workflow file to repo "{r}"')
+    #             else:
+    #                 workflow_exists.append(f'{primary_workflow_path}/{build_system}/{bswf}')
+    #                 logger.debug(f'md5sum of master repo and user repo {r} workflow {bswf} is the same.  skipping deployment.')
+        
+    #     wf_cleanup(primary_workflows=primary_workflows, template_workflows=template_workflows, optional_workflows=optional_workflows, build_system_workflows=build_system_workflows, repo_name=r)
+    #     git_push_workflows(r, workflow_sources, app_token)
+
+    #     # Add to the dict of new deployments for the report
+    #     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #     old_deploys[r] = {}
+    #     old_deploys[r]['refspec'] = refspec
+    #     old_deploys[r]['workflows'] = [{'name': os.path.basename(wf)} for wf in workflow_exists]
+    #     new_deploys[r] = {}
+    #     new_deploys[r]['refspec'] = refspec
+    #     new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
+
+    #     sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+
+    # if len(sq_data['Projects']) > num_sq_projects:
+    #     sonarqube_config(sq_data, save=True)
+    # else:
+    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
+        
+    # repository_statuscheck_secrets(repositories)
+    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
+
+def process_all_repo(module_name='', module_description='', repositories=[], default_managed_refspec=None):
+    """This Function processes all the repos passed to the function"""
     if not 'ORG_NAME' in os.environ:
         org_name='Omkarprakashchavan'
     else:
@@ -57,67 +247,24 @@ def main(module_name='', module_description='', repositories=[], default_managed
     logger.debug(f'Final list of Repos in the glcp org')
 
     # sq_data: Dict[str, List[Dict[str,str]]] = \
-    #    sonarqube_config(org_name=org_name)
+    #    # sonarqube_config(org_name=org_name)
     # num_sq_projects = len(sq_data['Projects'])
-    managed_ci_workflow_config_repo = 'tarun-repo-config'
-    managed_ci_workflow_config_repo_path = f'{os.path.dirname(__file__)}/../../{managed_ci_workflow_config_repo}'
-    managed_ci_workflow_config_repo_path = os.path.abspath(managed_ci_workflow_config_repo_path)
-    print(f'managed_ci_workflow_config_repo_path: {managed_ci_workflow_config_repo_path} ..')
-    files = os.listdir(managed_ci_workflow_config_repo_path)
-    print(files)
-
-    # if os.environ['RUN_EVENT'] == 'push':
-    #     repo = git.Repo(repo_path)
-    #     try:
-    #       main_branch = repo.heads.main
-    #     except AttributeError:
-    #       raise ValueError("The repository does not have a branch named 'main'.")
-        
-    #     latest_commit_sha = main_branch.commit.hexsha
-    #     second_top_commit = get_second_top_commit(repo_path)
-    #     if not second_top_commit:
-    #         sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
-    #     print(f"Latest commit SHA of 'main': {latest_commit_sha}")
-    #     try:
-    #       file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
-    #       # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
-    #     except ValueError:
-    #       print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
-    #     if file_commit_sha:
-    #         try:
-    #             content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
-    #             content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
-    #         except ValueError as e:
-    #             print(e)
-        
-    #         dict_old = load_yaml(content_old)
-    #         dict_new = load_yaml(content_new)
-    #         # Extract repositories data from dict1 and dict2
-    #         repositories1 = dict_old['modules'][0]['repositories']
-    #         repositories2 = dict_new['modules'][0]['repositories']
-            
-    #         changed_repositories = compare_repositories(repositories1, repositories2)
-    #         print(f'Changed repositories: {changed_repositories}')
-    #         process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
-    #     else:
-    #         print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
-    # else:
-    #     logger.info("RUN EVENT is not a push event, hence running the script normally")
-    #     process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
 
     new_deploys={}
     old_deploys={}
     for repo in repositories:
         r = repo.get('name')
         if r not in org_repos:
-            raise Exception(f"Repository {r} not found in {org_name} organization")
+            # raise Exception(f"Repository {r} not found in {org_name} organization")
+            print(f'{r} repo not found in {org_name}')
+            continue
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
         full_build_system = repo.get('build_system', [])
-        if len(full_build_system) > 1:
-            build_system = full_build_system[0]
-        else:
+        if full_build_system == []:
             build_system = full_build_system
+        else:
+            build_system = full_build_system[0]
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
@@ -133,14 +280,10 @@ def main(module_name='', module_description='', repositories=[], default_managed
             logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
             continue
         versioned_ci_repo = f'{os.path.dirname(__file__)}/../../{r}/{managed_ci_workflow_repo}'
-        print(f'versioned_ci_repo: {versioned_ci_repo}')
         versioned_ci_repo = os.path.abspath(versioned_ci_repo)
-        print(f'versioned_ci_repo: {versioned_ci_repo}')
-
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
-        print(template_workflow_path, primary_workflow_path, workflow_manifest_file)
 
         primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
         
@@ -235,16 +378,16 @@ def main(module_name='', module_description='', repositories=[], default_managed
         new_deploys[r]['refspec'] = refspec
         new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
 
-    #     sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+        # sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
     # if len(sq_data['Projects']) > num_sq_projects:
     #     sonarqube_config(sq_data, save=True)
     # else:
     #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
-    # repository_statuscheck_secrets(repositories)
-    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
-    
+    repository_statuscheck_secrets(repositories)
+    update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
+
 def repository_statuscheck_secrets(repositories):
     '''This functions adds status checks and secrets to required repositories'''
     repository_list = [reps['name'] for reps in repositories]
@@ -863,4 +1006,68 @@ def evaluate_context_for_bpr(refspec, repository, protected_status_check_context
     required_status_check_contexts = get_config(item='required_status_check_contexts', data_type=[])
     join_status_context = list(set(protected_status_check_list + required_status_check_contexts + tag_status_context + language_context))
     return join_status_context
-    
+
+def load_yaml(file_content):
+    """Read workflow-deployment.yaml content into a dictionary."""
+    return yaml.safe_load(file_content)
+
+def get_second_top_commit(repo_path):
+    repo = git.Repo(repo_path)
+    try:
+        branch = repo.heads.main
+    except AttributeError:
+        logger.error("The repository does not have a branch named 'main'.")
+        return False
+
+    commits = list(repo.iter_commits(branch.name, max_count=2))
+    print(commits)
+    if len(commits) < 2:
+        logger.error("There are less than two commits in the 'main' branch.")
+        return False
+
+    second_top_commit = commits[1]
+    commit = repo.commit(commits[0])
+    parent_commit = commit.parents[0] if commit.parents else None
+    if parent_commit:
+        diff = commit.diff(parent_commit)
+        changed_files = []
+        for change in diff:
+            file_info = {
+                'file': change.a_path,  # the file name
+                'change_type': change.change_type  # 'A', 'M', or 'D'
+            }
+            changed_files.append(file_info)
+        print(changed_files)
+    return second_top_commit
+
+def get_file_content_from_commit(repo, commit_sha, file_path):
+    """Get the content of a file from a specific commit SHA."""
+    commit = repo.commit(commit_sha)
+    try:
+        file_blob = commit.tree[file_path]
+        file_content = file_blob.data_stream.read().decode('utf-8')
+        return file_content
+    except KeyError:
+        raise ValueError(f"File '{file_path}' does not exist in commit {commit_sha}")
+
+def compare_repositories(repo_list1, repo_list2):
+    """Compare two lists of repositories and return the differences."""
+    changes = {'repositories': []}
+    # Convert list of dictionaries to a list of unique identifiers (name and refspec)
+    def get_repo_identifiers(repo_list):
+        return {(repo.get('name'), repo.get('refspec')): repo for repo in repo_list}
+    # Convert both lists to identifiers
+    repo_dict1 = get_repo_identifiers(repo_list1)
+    repo_dict2 = get_repo_identifiers(repo_list2)
+    # Find repositories in repo_dict2 that are not in repo_dict1
+    for key, repo in repo_dict2.items():
+        if key not in repo_dict1:
+            changes['repositories'].append(repo)
+    # Find repositories that exist in both dicts but have different contents
+    for key in repo_dict1.keys():
+        if key in repo_dict2 and repo_dict1[key] != repo_dict2[key]:
+            changes['repositories'].append(repo_dict2[key])
+    # If no changes, return an empty dictionary
+    if not changes['repositories']:
+        return {}
+    return changes
