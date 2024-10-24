@@ -1046,8 +1046,11 @@ def get_file_content_from_commit(repo, commit_sha, file_path):
     print(f'printing get_file_content_from_commit ')
     commit = repo.commit(commit_sha)
     try:
+        print(repo, commit_sha, file_path)
         file_blob = commit.tree[file_path]
+        print(file_blob)
         file_content = file_blob.data_stream.read().decode('utf-8')
+        print(file_content)
         print(f'printing get_file_content_from_commit {file_content}')
         return file_content
     except KeyError:
