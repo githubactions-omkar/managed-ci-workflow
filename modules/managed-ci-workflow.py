@@ -43,7 +43,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
     print(f'managed_ci_workflow_config_repo_path: {managed_ci_workflow_config_repo_path} ..')
     files = os.listdir(managed_ci_workflow_config_repo_path)
     print(files)
-    deployment_workflow_path = f'{managed_ci_workflow_config_repo_path}/configs/workflow-deployment.yaml'
+    deployment_workflow_path = f'configs/workflow-deployment.yaml'
 
     if os.environ['RUN_EVENT'] == 'push':
         repo = git.Repo(managed_ci_workflow_config_repo_path)
