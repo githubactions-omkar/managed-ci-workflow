@@ -6,6 +6,7 @@ import sys
 from typing import Dict, List, Union
 from datetime import datetime
 from pathlib import Path
+import glob
 
 import yaml
 from ruamel.yaml import YAML
@@ -361,7 +362,7 @@ def calc_template_md5sum(pr_template):
     relative_config_path = f'../../tarun-repo-1'
     workflow_path = (script_path / relative_config_path).resolve()
     print(f'files in mod folder: {os.listdir(workflow_path)}')
-    files = os.system('tree -h workflow_path')
+    files = glob.glob(f'{workflow_path}/*', recursive=True)
     print(files)
     # relative_config_path = f'../..tarun-repo-1/managed-ci-workflow'
     # workflow_path = (script_path / relative_config_path).resolve()
