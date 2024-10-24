@@ -1047,6 +1047,7 @@ def get_file_content_from_commit(repo, commit_sha, file_path):
     try:
         file_blob = commit.tree[file_path]
         file_content = file_blob.data_stream.read().decode('utf-8')
+        print(f'printing get_file_content_from_commit {file_content}')
         return file_content
     except KeyError:
         raise ValueError(f"File '{file_path}' does not exist in commit {commit_sha}")
