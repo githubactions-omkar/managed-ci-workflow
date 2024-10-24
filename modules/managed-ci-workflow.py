@@ -89,6 +89,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(f'versioned_ci_repo: {versioned_ci_repo}')
         versioned_ci_repo = os.path.abspath(versioned_ci_repo)
         print(f'versioned_ci_repo: {versioned_ci_repo}')
+        continue
         files = os.listdir(versioned_ci_repo)
         print(files)
 
