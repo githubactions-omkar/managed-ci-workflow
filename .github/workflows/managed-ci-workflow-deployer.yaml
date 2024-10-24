@@ -12,12 +12,12 @@ jobs:
       - name: Clone the MCI repository
         uses: actions/checkout@v3.3.0
         with:
-          repository: Omkarprakashchavan/managed-ci-workflow
+          repository: githubactions-omkar/managed-ci-workflow
           path: managed-ci-workflow
       - name: Clone the MCI repository
         uses: actions/checkout@v3.3.0
         with:
-          repository: Omkarprakashchavan/tarun-repo-config
+          repository: githubactions-omkar/tarun-repo-config
           path: tarun-repo-config
           fetch-depth: 0
       - name: Set Job event name as environment variable
