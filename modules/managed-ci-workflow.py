@@ -141,7 +141,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         for pwf in primary_workflows:
             source = f'{primary_workflow_path}/common/{pwf}'
             dest = get_dest_workflow_path(r, pwf)
-            print(dest)
+            print(f'dest path in primary workflow {dest}...{pwf}')
             logger.debug(f'comparing primary workflow {source} vs. {dest}')
             if not gh_obj.check_workflow_file(r, pwf):
                 # File does not exist, exists at 0 bytes, or other exception
