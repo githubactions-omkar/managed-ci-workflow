@@ -59,6 +59,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(f"Latest commit SHA of 'main': {latest_commit_sha}")
         try:
             file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+            print(file_commit_sha, type(file_commit_sha))
             # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
             if file_commit_sha:
                 try:
