@@ -12,14 +12,14 @@ language:
   # shell:
   #   - 'mci-check / check-done'
 common-secrets:
-  - 'MCI_QUAY_PASSWORD'
-  - 'MCI_QUAY_USER'
+  - 'ABC'
+  - 'EFG'
   # - 'AWS_ACCESS_KEY_ID'
   # - 'AWS_SECRET_ACCESS_KEY'
   # - 'QA_PEM'
 optional-secrets:
   ft-secrets:
-    - 'QA_PEM'
+    - 'OWNER'
 # required_status_check_contexts:
   # - 'mci-check / secret-scanner / Secret_Scan'
   # - 'mci-check / malware-scanner'
