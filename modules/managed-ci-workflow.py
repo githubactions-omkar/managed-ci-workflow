@@ -5,8 +5,6 @@ import os
 import sys
 from typing import Dict, List, Union
 from datetime import datetime
-from pathlib import Path
-import glob
 
 import yaml
 from ruamel.yaml import YAML
@@ -24,8 +22,7 @@ import json
 
 api_url = 'https://api.github.com/graphql'
 github_token = os.environ['GITHUB_APP_TOKEN']
-# organisation = 'glcp'
-organisation = 'Omkarprakashchavan'
+organisation = 'glcp'
 repositories = []
 headers = {
     'Authorization': f'Bearer {github_token}',
@@ -40,8 +37,7 @@ file_name_pattern='managed-ci'
 
 def main(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     if not 'ORG_NAME' in os.environ:
-        # org_name='glcp'
-        org_name='Omkarprakashchavan'
+        org_name='glcp'
     else:
         org_name=os.environ['ORG_NAME']
     global managed_ci_workflow_repo
@@ -55,26 +51,24 @@ def main(module_name='', module_description='', repositories=[], default_managed
     ## Change values accordingly in get_logger()
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
-    # org_repos : List[str] = gh_obj.get_repo_names_in_org()
-    org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
+    org_repos : List[str] = gh_obj.get_repo_names_in_org()
 
-    logger.debug(f'Final list of Repos in the glcp org {org_repos}')
+    logger.debug(f'Final list of Repos in the glcp org')
 
-    # sq_data: Dict[str, List[Dict[str,str]]] = \
-    #    sonarqube_config(org_name=org_name)
-    # num_sq_projects = len(sq_data['Projects'])
+    sq_data: Dict[str, List[Dict[str,str]]] = \
+       sonarqube_config(org_name=org_name)
+    num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
     old_deploys={}
-    print(repositories)
     for repo in repositories:
         r = repo.get('name')
         if r not in org_repos:
             raise Exception(f"Repository {r} not found in {org_name} organization")
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
-        build_system = repo.get('build_system', [])
-        print(r, refspec, optional_workflows_requested, build_system)
+        full_build_system = repo.get('build_system', [])
+        build_system = full_build_system[0]
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
@@ -89,20 +83,12 @@ def main(module_name='', module_description='', repositories=[], default_managed
         if not clone_status:
             logger.error(f'Failed to clone {r} repositoroy for tag {refspec}. Hence skipping it...')
             continue
-        script_path = Path(__file__).parent
-        relative_config_path = f'../../{r}/{managed_ci_workflow_repo}'
-        versioned_ci_repo = (script_path / relative_config_path).resolve()
-        # versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
-        print(f'printing versioned_ci_repo {versioned_ci_repo}......')
+        versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
 
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
-        print(f'template_workflow_path {template_workflow_path}.. {os.listdir(template_workflow_path)}')
-        print(f'primary_workflow_path {primary_workflow_path}.. {os.listdir(primary_workflow_path)}')
-        print(f'workflow_manifest_file {workflow_manifest_file}..')
 
-        # continue
         primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
         
         workflow_sources=[]
@@ -142,7 +128,6 @@ def main(module_name='', module_description='', repositories=[], default_managed
         for pwf in primary_workflows:
             source = f'{primary_workflow_path}/common/{pwf}'
             dest = get_dest_workflow_path(r, pwf)
-            print(f'dest path in primary workflow {dest}...{pwf}')
             logger.debug(f'comparing primary workflow {source} vs. {dest}')
             if not gh_obj.check_workflow_file(r, pwf):
                 # File does not exist, exists at 0 bytes, or other exception
@@ -199,13 +184,13 @@ def main(module_name='', module_description='', repositories=[], default_managed
 
         sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
-    # if len(sq_data['Projects']) > num_sq_projects:
-    #     sonarqube_config(sq_data, save=True)
-    # else:
-    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
+    if len(sq_data['Projects']) > num_sq_projects:
+        sonarqube_config(sq_data, save=True)
+    else:
+        logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
     repository_statuscheck_secrets(repositories)
-    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
+    update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
     
 def repository_statuscheck_secrets(repositories):
     '''This functions adds status checks and secrets to required repositories'''
@@ -247,20 +232,15 @@ def repository_statuscheck_secrets(repositories):
 def workflow_manifest(manifest_file, build_system):
     with open(manifest_file, "r") as f:
         data = yaml.safe_load(f)
-        if build_system == []:
-            return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), []
-        else:
-            return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
+    return data.get('primary_workflows', []), data.get('optional_workflows', []), data.get('template_workflows', []), data.get('custom_branch_workflows', []), data.get('cron_workflows', []), data.get(build_system, [])
+
 
 def custom_branch_update(custom_branch_workflow: str, repo_name: str, type: str):
     if type != "common":
         workflow_path = f'/{type}'
     else:
         workflow_path = "/common"
-    # primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
-    script_path = Path(__file__).parent
-    relative_config_path = f'../../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
-    primary_workflow_path = (script_path / relative_config_path).resolve()
+    primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
     default_branch = gh_obj.get_default_branch(repo_name)
     with open(f'{primary_workflow_path}/{custom_branch_workflow}', 'r') as file:
         yaml_contents = yaml.safe_load(file)
@@ -341,36 +321,12 @@ def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[
         sys.exit(1)
 
 def get_dest_workflow_path(repo_name, workflow):
-    script_path = Path(__file__).parent
-    relative_config_path = f'../../{repo_name}/.github/workflows/{workflow}'
-    workflow_path = (script_path / relative_config_path).resolve()
-    # workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
-    print(f'workflow_path: {workflow_path}')
+    workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
     if file_exists(workflow_path, check_nonzero_filesize=True):
         return workflow_path
     return None
 
 def calc_template_md5sum(pr_template):
-    print(f'printing calc_template_md5sum path: {pr_template}')
-    script_path = Path(__file__).parent
-    relative_config_path = f'.'
-    workflow_path = (script_path / relative_config_path).resolve()
-    print(f'files in mod folder: {os.listdir(workflow_path)}')
-    relative_config_path = f'../'
-    workflow_path = (script_path / relative_config_path).resolve()
-    print(f'files in mod folder: {os.listdir(workflow_path)}')
-    relative_config_path = f'../..'
-    workflow_path = (script_path / relative_config_path).resolve()
-    print(f'files in mod folder: {os.listdir(workflow_path)}')
-    relative_config_path = f'../../tarun-repo-1'
-    workflow_path = (script_path / relative_config_path).resolve()
-    print(f'files in mod folder: {os.listdir(workflow_path)}')
-    files = glob.glob(f'{workflow_path}/managed-ci-workflow/workflows/*', recursive=True)
-    print(files)
-    # relative_config_path = f'../..tarun-repo-1/managed-ci-workflow'
-    # workflow_path = (script_path / relative_config_path).resolve()
-    # print(f'files in mod folder: {os.listdir(workflow_path)}')
-
     with open(pr_template, 'rb') as fh:
         data = fh.read()
         pr_template_md5 = hashlib.md5(data).hexdigest()
@@ -564,13 +520,7 @@ def get_config(item='', data_type=any):
     '''This function checks if requested item exists in deployer-config.yaml or not'''
     # Read the YAML configuration file
     print(f'Inside the get_confi function')
-    file_path = 'deployer-config.yaml'
-    script_path = Path(__file__).parent
-    relative_config_path = f'../{file_path}'
-    deployer_config_abs_path = (script_path / relative_config_path).resolve()
-    # deployment_workflow_path = str((script_path / relative_config_path / 'configs' / 'workflow-deployment.yaml').resolve())
-    deployment_workflow_path = 'configs/workflow-deployment.yaml'
-    with open(deployer_config_abs_path, "r") as config_file:
+    with open("deployer-config.yaml", "r") as config_file:
         config = yaml.safe_load(config_file)
         print(config, item, data_type)
     try:
@@ -705,28 +655,11 @@ def check_if_branch_protected(repository, repository_id, default_branch, refspec
                     protected_status_check_context = rule["requiredStatusCheckContexts"]
                     updated_status_check_context = evaluate_context_for_bpr(refspec, repository, protected_status_check_context)
                     branch_protection_rule(repository, default_branch, updated_status_check_context)
-        
-        # Check if branch protection rule exists for 'hotfix'
-        hotfix_bpr_exists = any(branch.lower().startswith('hotfix') for branch in protected_branches)
-        if hotfix_bpr_exists:
-            for item in data:
-                if item['pattern'].lower().startswith('hotfix'):
-                    protected_status_check_context = item['requiredStatusCheckContexts']
-                    protected_branch = item['pattern']
-                    print(f"{item['pattern']} exists in branch protection rule")
-        else:
-            protected_status_check_context = []
-            protected_branch = 'hotfix*'
-            print(f"hotfix does not exists in branch protection rule")
-        updated_status_check_context = evaluate_context_for_bpr(refspec, repository, protected_status_check_context)
-        branch_protection_rule(repository, protected_branch, updated_status_check_context)
-
     except requests.exceptions.RequestException as e:
         logger.debug(f"Failed to query GitHub GraphQL API. Status code: {response.text} {str(e)}")
         protected_status_check_context = []
         updated_status_check_context = evaluate_context_for_bpr(refspec, repository, protected_status_check_context)
         branch_protection_rule(repository, default_branch, updated_status_check_context)
-        branch_protection_rule(repository, 'hotfix*', updated_status_check_context)
 
 def remove_none_values(d):
     return {
