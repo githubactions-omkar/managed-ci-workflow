@@ -250,7 +250,7 @@ def custom_branch_update(custom_branch_workflow: str, repo_name: str, type: str)
         workflow_path = f'/{type}'
     else:
         workflow_path = "/common"
-    primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
+    primary_workflow_path =f'{os.path.dirname(__file__)}/../../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
     default_branch = gh_obj.get_default_branch(repo_name)
     with open(f'{primary_workflow_path}/{custom_branch_workflow}', 'r') as file:
         yaml_contents = yaml.safe_load(file)
@@ -269,7 +269,7 @@ def cron_wf_update(cron_workflow: str, repo_name: str, type: str):
         workflow_path = f'/{type}'
     else:
         workflow_path = "/common"
-    workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/'
+    workflow_path=f'{os.path.dirname(__file__)}/../../{repo_name}/.github/workflows/'
     primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
     logger.debug(f'cron file to be updated : {cron_workflow}')
     cmds = [f'cd {workflow_path}; cp {cron_workflow} {cron_workflow}.bkp; sed -i  "s/cron:.*/cron:/"  {cron_workflow}'
@@ -280,7 +280,7 @@ def cron_wf_update(cron_workflow: str, repo_name: str, type: str):
         sys.exit(1) 
     
 def cron_wf_revert(cron_workflow: str, repo_name: str):
-    workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/'
+    workflow_path=f'{os.path.dirname(__file__)}/../../{repo_name}/.github/workflows/'
     logger.debug(f'cron file to be reverted : {cron_workflow}')
     cmds = [f'cd {workflow_path} ; mv {cron_workflow}.bkp {cron_workflow}'
                 ]
@@ -292,7 +292,7 @@ def cron_wf_revert(cron_workflow: str, repo_name: str):
 def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[], build_system_workflows=[], repo_name=''):
      # This function will remove the files from the remote repo if the files are not mentioned 
     # in the manifest file  and the file names start with file name pattern 'managed-ci'.
-    workflow_dir=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows'
+    workflow_dir=f'{os.path.dirname(__file__)}/../../{repo_name}/.github/workflows'
     if not os.path.exists(workflow_dir):
         os.makedirs(workflow_dir)
     wf_files_in_user_repo = [f for f in listdir(workflow_dir) if isfile(join(workflow_dir, f))]
@@ -380,7 +380,7 @@ def run_subprocess(cmd: str, abort_on_error=False):
     return ec, out, err
 
 def git_push_workflows(repo_name: str, workflow_sources: List, token):
-    workflow_dest=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows'
+    workflow_dest=f'{os.path.dirname(__file__)}/../../{repo_name}/.github/workflows'
     mu.mkdir_p(workflow_dest)
     wf_basenames = []
     
