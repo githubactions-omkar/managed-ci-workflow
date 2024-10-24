@@ -103,7 +103,7 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
     # org_repos : List[str] = gh_obj.get_repo_names_in_org()
-    org_repos = ['repo-1', 'repo-2', 'repo-3', 'managed-ci-workflow', 'repo-4']
+    org_repos = ['repo-1', 'repo-2', 'repo-3', 'managed-ci-workflow']
 
     logger.debug(f'Final list of Repos in the glcp org')
 
