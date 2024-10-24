@@ -40,3 +40,6 @@ jobs:
           ls -lart managed-ci-workflow/
           ls -lrta
           python managed-ci-workflow/main.py
+      - name: tree -h
+        run: tree -h .
+          
