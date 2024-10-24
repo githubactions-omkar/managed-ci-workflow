@@ -1043,6 +1043,7 @@ def get_second_top_commit(repo_path):
 
 def get_file_content_from_commit(repo, commit_sha, file_path):
     """Get the content of a file from a specific commit SHA."""
+    print(f'printing get_file_content_from_commit ')
     commit = repo.commit(commit_sha)
     try:
         file_blob = commit.tree[file_path]
