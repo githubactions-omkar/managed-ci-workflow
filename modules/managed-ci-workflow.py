@@ -22,7 +22,7 @@ import json
 
 api_url = 'https://api.github.com/graphql'
 github_token = os.environ['GITHUB_APP_TOKEN']
-organisation = 'glcp'
+organisation = 'Omkarprakashchavan'
 repositories = []
 headers = {
     'Authorization': f'Bearer {github_token}',
@@ -37,7 +37,7 @@ file_name_pattern='managed-ci'
 
 def main(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     if not 'ORG_NAME' in os.environ:
-        org_name='glcp'
+        org_name='Omkarprakashchavan'
     else:
         org_name=os.environ['ORG_NAME']
     global managed_ci_workflow_repo
@@ -182,12 +182,12 @@ def main(module_name='', module_description='', repositories=[], default_managed
         new_deploys[r]['refspec'] = refspec
         new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
 
-        sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+        # sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
-    if len(sq_data['Projects']) > num_sq_projects:
-        sonarqube_config(sq_data, save=True)
-    else:
-        logger.debug('nothing to push... all repos are present in the SonarQube config file')
+    # if len(sq_data['Projects']) > num_sq_projects:
+    #     sonarqube_config(sq_data, save=True)
+    # else:
+    #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
     repository_statuscheck_secrets(repositories)
     update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
