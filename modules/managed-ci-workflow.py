@@ -91,14 +91,11 @@ def main(module_name='', module_description='', repositories=[], default_managed
         print(f'versioned_ci_repo: {versioned_ci_repo}')
         versioned_ci_repo = os.path.abspath(versioned_ci_repo)
         print(f'versioned_ci_repo: {versioned_ci_repo}')
-        
-        files = os.listdir(versioned_ci_repo)
-        print(files)
-        continue
 
         template_workflow_path =f'{versioned_ci_repo}/templates'
         primary_workflow_path =f'{versioned_ci_repo}/workflows'
         workflow_manifest_file =f'{versioned_ci_repo}/workflow-manifest.yaml'
+        print(template_workflow_path, primary_workflow_path, workflow_manifest_file)
 
         primary_workflows, optional_workflows, template_workflows, custom_branch_workflows, cron_workflows, build_system_workflows = workflow_manifest(workflow_manifest_file, build_system)
         
