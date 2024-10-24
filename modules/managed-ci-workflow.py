@@ -52,12 +52,13 @@ def main(module_name='', module_description='', repositories=[], default_managed
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
     org_repos : List[str] = gh_obj.get_repo_names_in_org()
+    org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
 
     logger.debug(f'Final list of Repos in the glcp org')
 
-    sq_data: Dict[str, List[Dict[str,str]]] = \
-       sonarqube_config(org_name=org_name)
-    num_sq_projects = len(sq_data['Projects'])
+    # sq_data: Dict[str, List[Dict[str,str]]] = \
+    #    sonarqube_config(org_name=org_name)
+    # num_sq_projects = len(sq_data['Projects'])
 
     new_deploys={}
     old_deploys={}
@@ -182,7 +183,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
         new_deploys[r]['refspec'] = refspec
         new_deploys[r]['workflows'] = [{'name': os.path.basename(wf), 'updated': timestamp} for wf in workflow_sources]
 
-        # sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
+    #     sonarqube_config(sq_data, r, gh_obj.get_default_branch(r))
 
     # if len(sq_data['Projects']) > num_sq_projects:
     #     sonarqube_config(sq_data, save=True)
