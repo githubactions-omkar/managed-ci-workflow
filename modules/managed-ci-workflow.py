@@ -331,7 +331,8 @@ def wf_cleanup(primary_workflows=[], template_workflows=[], optional_workflows=[
         sys.exit(1)
 
 def get_dest_workflow_path(repo_name, workflow):
-    workflow_path=f'{os.path.dirname(__file__)}/../{repo_name}/.github/workflows/{workflow}'
+    workflow_path=f'{os.path.dirname(__file__)}/../../{repo_name}/.github/workflows/{workflow}'
+    workflow_path = os.path.abspath(workflow_path)
     if file_exists(workflow_path, check_nonzero_filesize=True):
         return workflow_path
     return None
