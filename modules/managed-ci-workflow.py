@@ -23,7 +23,7 @@ import json
 
 api_url = 'https://api.github.com/graphql'
 github_token = os.environ['GITHUB_APP_TOKEN']
-organisation = 'Omkarprakashchavan'
+organisation = 'githubactions-omkar'
 repositories = []
 headers = {
     'Authorization': f'Bearer {github_token}',
@@ -88,7 +88,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
 def process_all_repo(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     """This Function processes all the repos passed to the function"""
     if not 'ORG_NAME' in os.environ:
-        org_name='Omkarprakashchavan'
+        org_name='githubactions-omkar'
     else:
         org_name=os.environ['ORG_NAME']
     global managed_ci_workflow_repo
@@ -103,7 +103,7 @@ def process_all_repo(module_name='', module_description='', repositories=[], def
     logger = mu.get_logger('workflow-deployer', f'{logdir}/workflow-deployer.log', level='debug', output_to_console=True)
     gh_obj = GitHubAPIs(org_name=org_name, token=app_token, logger=logger)
     # org_repos : List[str] = gh_obj.get_repo_names_in_org()
-    org_repos = ['tarun-repo-1', 'tarun-repo-2', 'tarun-repo-3', 'managed-ci-workflow', 'tarun-repo-config']
+    org_repos = ['repo-1', 'repo-2', 'repo-3', 'managed-ci-workflow', 'repo-4']
 
     logger.debug(f'Final list of Repos in the glcp org')
 
@@ -744,6 +744,9 @@ def branch_protection_rule(repository, default_branch, updated_status_check_cont
     url = f'https://api.github.com/repos/{organisation}/{repository}/branches/{default_branch}/protection'
     response = requests.get(url, headers=headers)
     response_json = json.loads(response.text)
+    if response.status_code == 404:
+        logger.error(f"Branch protection rule not found for the {organisation}/{repository}.")
+        print('create a new rule')
     try:
         required_pull_request_reviews_count = response_json["required_pull_request_reviews"]["required_approving_review_count"]
         if required_pull_request_reviews_count != 0:
