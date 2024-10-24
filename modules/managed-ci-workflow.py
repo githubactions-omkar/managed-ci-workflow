@@ -69,7 +69,8 @@ def main(module_name='', module_description='', repositories=[], default_managed
         refspec = repo.get('refspec', default_managed_refspec)
         optional_workflows_requested = repo.get('optional_workflows', [])
         full_build_system = repo.get('build_system', [])
-        build_system = full_build_system[0]
+        build_system = full_build_system
+        
 
         if gh_obj.check_is_repo_archived(r):
             logger.info(f'Repo "{r}" is Archived ...Skipping')
