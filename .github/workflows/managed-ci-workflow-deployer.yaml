@@ -41,7 +41,7 @@ jobs:
           ls -lrta
           git config --global user.email "omkarprakashchavan@gmail.com"
           git config --global user.name "Automation"
-          GITHUB_APP_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          GITHUB_APP_TOKEN=${{ secrets.APP_TOKEN }}
           python managed-ci-workflow/main.py
       - name: tree -h
         run: tree -h .
