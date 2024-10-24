@@ -89,7 +89,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
             continue
         versioned_ci_repo = f'{os.path.dirname(__file__)}/../{r}/{managed_ci_workflow_repo}'
         print(f'versioned_ci_repo: {versioned_ci_repo}')
-        versioned_ci_repo = os.path.abspath(versioned_ci_repo)
+        #versioned_ci_repo = os.path.abspath(versioned_ci_repo)
         print(f'versioned_ci_repo: {versioned_ci_repo}')
         
         files = os.listdir(versioned_ci_repo)
