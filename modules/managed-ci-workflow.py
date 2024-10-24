@@ -257,7 +257,10 @@ def custom_branch_update(custom_branch_workflow: str, repo_name: str, type: str)
         workflow_path = f'/{type}'
     else:
         workflow_path = "/common"
-    primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
+    # primary_workflow_path =f'{os.path.dirname(__file__)}/../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
+    script_path = Path(__file__).parent
+    relative_config_path = f'../../{repo_name}/{managed_ci_workflow_repo}/workflows{workflow_path}'
+    primary_workflow_path = (script_path / relative_config_path).resolve()
     default_branch = gh_obj.get_default_branch(repo_name)
     with open(f'{primary_workflow_path}/{custom_branch_workflow}', 'r') as file:
         yaml_contents = yaml.safe_load(file)
