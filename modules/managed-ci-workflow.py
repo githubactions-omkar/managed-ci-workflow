@@ -199,8 +199,8 @@ def main(module_name='', module_description='', repositories=[], default_managed
     # else:
     #     logger.debug('nothing to push... all repos are present in the SonarQube config file')
         
-    repository_statuscheck_secrets(repositories)
-    update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
+    # repository_statuscheck_secrets(repositories)
+    # update_log_file(new_deploys=new_deploys, old_deploys=old_deploys)
     
 def repository_statuscheck_secrets(repositories):
     '''This functions adds status checks and secrets to required repositories'''
