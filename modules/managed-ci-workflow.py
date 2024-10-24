@@ -361,9 +361,9 @@ def calc_template_md5sum(pr_template):
     relative_config_path = f'../../tarun-repo-1'
     workflow_path = (script_path / relative_config_path).resolve()
     print(f'files in mod folder: {os.listdir(workflow_path)}')
-    # relative_config_path = f'../..tarun-repo-1'
-    # workflow_path = (script_path / relative_config_path).resolve()
-    # print(f'files in mod folder: {os.listdir(workflow_path)}')
+    relative_config_path = f'../..tarun-repo-1/managed-ci-workflow'
+    workflow_path = (script_path / relative_config_path).resolve()
+    print(f'files in mod folder: {os.listdir(workflow_path)}')
 
     with open(pr_template, 'rb') as fh:
         data = fh.read()
