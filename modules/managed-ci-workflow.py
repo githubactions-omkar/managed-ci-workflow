@@ -601,10 +601,10 @@ def create_list_repo_ids(repositories, secrets):
         githubapi = f"https://api.github.com/repos/{organisation}/{repo}"
         repo_response = requests.get(githubapi, headers=auth_header)
         repository_ids.append(repo_response.json()['id'])
-    if bool(repository_ids):
-        update_secret_access_to_repo(repository_ids, secrets)
-    else:
-        logger.debug("Unable to create list of repository ids")
+    # if bool(repository_ids):
+    #     update_secret_access_to_repo(repository_ids, secrets)
+    # else:
+    #     logger.debug("Unable to create list of repository ids")
 
 def update_secret_access_to_repo(repository_ids, secrets):
     """This function adds the repositories for to access Organisation secrets"""
