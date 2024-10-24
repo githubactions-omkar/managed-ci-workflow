@@ -83,7 +83,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
           print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
     else:
         logger.info("RUN EVENT is not a push event, hence running the script normally")
-        process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
+        process_all_repo(module_name='', module_description='', repositories=[], default_managed_refspec=None)
 
 def process_all_repo(module_name='', module_description='', repositories=[], default_managed_refspec=None):
     """This Function processes all the repos passed to the function"""
