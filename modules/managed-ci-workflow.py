@@ -64,7 +64,7 @@ def main(module_name='', module_description='', repositories=[], default_managed
     old_deploys={}
     for repo in repositories:
         r = repo.get('name')
-        if r == 'tarun-repo-3':
+        if r == 'tarun-repo-2':
             continue
         if r not in org_repos:
             raise Exception(f"Repository {r} not found in {org_name} organization")
