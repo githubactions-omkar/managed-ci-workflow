@@ -58,28 +58,28 @@ def main(module_name='', module_description='', repositories=[], default_managed
             sys.exit("Unable to get second top commit for the managed-ci-workflow-config repository..")
         print(f"Latest commit SHA of 'main': {latest_commit_sha}")
         try:
-          file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
-          # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
+            file_commit_sha = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+            # print(f"Commit SHA of '{deployment_workflow_path}' in the latest commit: {file_commit_sha}")
+            if file_commit_sha:
+                try:
+                    content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
+                    content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
+                except ValueError as e:
+                    print(e)
+            
+                dict_old = load_yaml(content_old)
+                dict_new = load_yaml(content_new)
+                # Extract repositories data from dict1 and dict2
+                repositories1 = dict_old['modules'][0]['repositories']
+                repositories2 = dict_new['modules'][0]['repositories']
+                
+                changed_repositories = compare_repositories(repositories1, repositories2)
+                print(f'Changed repositories: {changed_repositories}')
+                process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
+            else:
+                print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
         except ValueError:
           print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
-        if file_commit_sha:
-            try:
-                content_old = get_file_content_from_commit(repo, second_top_commit, deployment_workflow_path)
-                content_new = get_file_content_from_commit(repo, latest_commit_sha, deployment_workflow_path)
-            except ValueError as e:
-                print(e)
-        
-            dict_old = load_yaml(content_old)
-            dict_new = load_yaml(content_new)
-            # Extract repositories data from dict1 and dict2
-            repositories1 = dict_old['modules'][0]['repositories']
-            repositories2 = dict_new['modules'][0]['repositories']
-            
-            changed_repositories = compare_repositories(repositories1, repositories2)
-            print(f'Changed repositories: {changed_repositories}')
-            process_all_repo(module_name='', module_description='', repositories=changed_repositories.get('repositories'), default_managed_refspec=None)
-        else:
-            print(f"File '{deployment_workflow_path}' does not exist in the latest commit {latest_commit_sha}")
     else:
         logger.info("RUN EVENT is not a push event, hence running the script normally")
         process_all_repo(module_name='', module_description='', repositories=repositories, default_managed_refspec=None)
