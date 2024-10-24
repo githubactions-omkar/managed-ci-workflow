@@ -721,7 +721,8 @@ def get_config(item='', data_type=any):
     '''This function checks if requested item exists in deployer-config.yaml or not'''
     # Read the YAML configuration file
     print(f'Inside the get_confi function')
-    with open("deployer-config.yaml", "r") as config_file:
+    deployer_config_path = f'{os.path.dirname(__file__)}/../deployer-config.yaml'
+    with open(deployer_config_path, "r") as config_file:
         config = yaml.safe_load(config_file)
         print(config, item, data_type)
     try:
@@ -1046,12 +1047,8 @@ def get_file_content_from_commit(repo, commit_sha, file_path):
     print(f'printing get_file_content_from_commit ')
     commit = repo.commit(commit_sha)
     try:
-        print(repo, commit_sha, file_path)
         file_blob = commit.tree[file_path]
-        print(file_blob)
         file_content = file_blob.data_stream.read().decode('utf-8')
-        print(file_content)
-        print(f'printing get_file_content_from_commit {file_content}')
         return file_content
     except KeyError:
         raise ValueError(f"File '{file_path}' does not exist in commit {commit_sha}")
